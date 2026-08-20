@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Two grounds, deliberately different (SPEC §10):
+ * browsing is a notebook, reviewing is a dark room with one lamp on.
+ * Telegram's own themeParams are NOT consumed — only `colorScheme`.
+ */
+@layer base {
+  :root {
+    --ink: 22 26 43; /* #161A2B */
+    --paper: 251 247 240; /* #FBF7F0 */
+    --indigo: 46 67 116; /* #2E4374 */
+    --madder: 180 67 46; /* #B4432E */
+    --saffron: 224 163 46; /* #E0A32E */
+    --sage: 110 139 107; /* #6E8B6B */
+
+    /* light mode — the notebook */
+    --ground: var(--paper);
+    --surface: 255 253 249;
+    --raised: 246 240 230;
+    --line: 226 216 200;
+    --text: var(--ink);
+    --text-muted: 92 99 122;
+    --text-faint: 141 146 163;
+
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  [data-mode='dark'] {
+    /* dark mode — the same room, lights low */
+    --ground: var(--ink);
+    --surface: 30 35 56;
+    --raised: 41 47 73;
+    --line: 55 62 92;
+    --text: 240 236 228;
+    --text-muted: 165 172 195;
+    --text-faint: 122 130 156;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: rgb(var(--ground));
+    color: rgb(var(--text));
+    font-family: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  /* SPEC §10: never 100vh. The SDK's viewportStableHeight feeds this variable. */
+  #root {
+    min-height: var(--app-height, 100%);
+  }
+
+  ::selection {
+    background-color: rgb(var(--saffron) / 0.3);
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea {
+    /* iOS zooms the webview on focus below 16px. */
+    font-size: max(1rem, 16px);
+  }
+}
+
+@layer components {
+  .focus-ring {
+    @apply outline-none ring-offset-2 ring-offset-ground focus-visible:ring-2 focus-visible:ring-indigo;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
