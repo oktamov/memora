@@ -24,7 +24,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.3,<9",
-    "pytest-asyncio>=0.24,<0.25",
+    "pytest-asyncio>=1.0,<2",
     "ruff>=0.8,<0.9",
     "mypy>=1.13,<2",
     "types-redis>=4.6",
@@ -58,5 +58,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# One event loop for the whole run: the SQLAlchemy engine and its asyncpg pool are
+# process-wide, and a per-test loop would strand pooled connections on a closed loop.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]

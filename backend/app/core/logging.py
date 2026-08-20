@@ -21,12 +21,12 @@ def configure_logging() -> None:
         return
 
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        jsonlogger.JsonFormatter(
-            "%(asctime)s %(levelname)s %(name)s %(message)s",
-            rename_fields={"asctime": "ts", "levelname": "level", "name": "logger"},
-        )
+    # python-json-logger 2.x ships no type stubs for its formatter.
+    formatter = jsonlogger.JsonFormatter(  # type: ignore[no-untyped-call]
+        "%(asctime)s %(levelname)s %(name)s %(message)s",
+        rename_fields={"asctime": "ts", "levelname": "level", "name": "logger"},
     )
+    handler.setFormatter(formatter)
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(settings.LOG_LEVEL.upper())

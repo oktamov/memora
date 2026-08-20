@@ -2,15 +2,17 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """All runtime configuration. Nothing is read from the environment elsewhere."""
 
+    # Repo-root `.env` first, then `backend/.env`, so both `uv run` from `backend/`
+    # and a container with the file mounted at the root pick the same values up.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,
@@ -61,6 +63,13 @@ class Settings(BaseSettings):
     DEFAULT_TIMEZONE: str = "Asia/Tashkent"
 
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+    @model_validator(mode="after")
+    def _reject_a_weak_secret_in_production(self) -> "Settings":
+        """A 32-byte minimum for HS256. Dev may run on the placeholder; prod may not."""
+        if self.ENV == "prod" and len(self.JWT_SECRET.encode()) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 bytes when ENV=prod.")
+        return self
 
     @property
     def bot_enabled(self) -> bool:

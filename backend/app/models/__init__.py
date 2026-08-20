@@ -1,3 +1,6 @@
 """Model package. Importing it registers every table on `Base.metadata`."""
 
-__all__: list[str] = []
+from app.models.deck import Deck, DeckKind
+from app.models.user import User
+
+__all__ = ["Deck", "DeckKind", "User"]
