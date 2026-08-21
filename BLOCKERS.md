@@ -43,10 +43,10 @@ against the live API.
 **Needed:** a Google AI Studio key in `.env`.
 
 **Meanwhile:** `providers/dictionary/gemini.py` is complete, using structured output
-with a hard JSON response schema (never free-text parsing). Absent the key,
-`FakeDictionaryProvider` serves fixtures. This means the non-English source-language
-path and the `UZ_PREFER_LLM` path cannot be measured for quality until the key exists —
-noted in `DECISIONS.md`.
+with a hard JSON response schema (never free-text parsing), and is covered by tests
+against recorded envelopes. Absent the key, `FakeDictionaryProvider` serves fixtures.
+The `UZ_PREFER_LLM` comparison SPEC §6 asks for cannot be run until a key exists; the
+gap and the exact procedure to close it are written up in `DECISIONS.md` D7.
 
 ## B5 — A physical phone running Telegram
 

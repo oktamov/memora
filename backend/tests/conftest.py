@@ -27,6 +27,7 @@ from app.db.base import Base
 from app.db.session import async_session_factory, engine
 from app.main import create_app
 from app.models.user import User
+from app.providers.registry import ProviderRegistry
 from app.services import auth_service
 from tests.factories import DUMMY_BOT_TOKEN, make_init_data
 
@@ -61,6 +62,7 @@ async def app() -> AsyncIterator[FastAPI]:
     instance = create_app()
     instance.state.http_client = httpx.AsyncClient()
     instance.state.redis = create_redis()
+    instance.state.provider_registry = ProviderRegistry(instance.state.http_client)
     try:
         await instance.state.redis.flushdb()
         yield instance

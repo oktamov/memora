@@ -1,0 +1,28 @@
+[
+  {
+    "word": "run",
+    "phonetic": "/ɹʌn/",
+    "phonetics": [
+      { "text": "/ɹʌn/", "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/run-us.mp3" }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "verb",
+        "definitions": [
+          {
+            "definition": "To move swiftly on foot so that both feet leave the ground during each stride.",
+            "example": "He ran to the station."
+          },
+          { "definition": "To manage or be in charge of something." }
+        ]
+      },
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          { "definition": "An act or instance of running.", "example": "I went for a run." },
+          { "definition": "A continuous period of something." }
+        ]
+      }
+    ]
+  }
+]

@@ -18,6 +18,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.redis import create_redis
 from app.db.session import engine
+from app.providers.registry import ProviderRegistry
 
 logger = get_logger(__name__)
 
@@ -34,8 +35,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         follow_redirects=True,
     )
     app.state.redis = create_redis()
+    # Providers are constructed once and handed the shared client (SPEC §6).
+    app.state.provider_registry = ProviderRegistry(app.state.http_client)
 
-    logger.info("startup", extra={"event": "startup", "env": settings.ENV})
+    logger.info(
+        "startup",
+        extra={
+            "event": "startup",
+            "env": settings.ENV,
+            "bot_enabled": settings.bot_enabled,
+            "provider_fakes": app.state.provider_registry.uses_fakes,
+        },
+    )
     try:
         yield
     finally:

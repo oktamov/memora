@@ -110,3 +110,73 @@ compose: /health → {"status":"ok","db":"up","redis":"up","version":"0.1.0"}
          docker compose logs api | grep '"level": "ERROR"' → (none)
          alembic_version → 0002_users_decks   alembic check → No new upgrade operations detected
 ```
+
+---
+
+## M2 — Lookup
+
+- [x] `providers/base.py` — `Meaning`, `LookupResult` dataclasses + `DictionaryProvider` / `TranslationProvider` Protocols, verbatim from SPEC §6
+- [x] `providers/dictionary/free_dictionary.py` — dictionaryapi.dev, keyless, POS/IPA/definitions/examples
+- [x] `providers/translation/azure.py` — Azure Translator v3.0, **one** batched call per lookup
+- [x] `providers/dictionary/gemini.py` — structured output with a hard JSON schema, never free-text parsing
+- [x] `providers/translation/gemini.py` — Gemini as translation fallback
+- [x] `providers/fakes.py` — `Fake*` siblings returning fixture data, selected when the key is absent (AGENT.md §3)
+- [x] `providers/registry.py` — language-aware chain: `en` → FreeDictionary + translate; non-`en` → Gemini; `UZ_PREFER_LLM` prefers Gemini when `target_lang == "uz"`
+- [x] Every provider takes the shared `httpx.AsyncClient` by constructor injection (SPEC §13)
+- [x] 4s timeout per provider, fall through on raise/timeout, whole-chain failure → 503 retryable, never a partial result
+- [x] `models/lookup.py` — `LookupCache`, **global not per-user**, unique `(term, source_lang, target_lang)`
+- [x] Alembic migration `0003_lookup_cache`
+- [x] `services/lookup_service.py` — normalize → Redis (24h) → `lookup_cache` (warm Redis, bump `hit_count`) → chain → persist both
+- [x] Quota: Redis counter expiring at the user's local midnight; cache hits do **not** count
+- [x] Quota: accounts younger than 24h capped at 30/day (SPEC §8.5)
+- [x] Rate limit: 20 lookups/min per user, 429 + `Retry-After`
+- [x] Input validation: reject >64 chars or >4 whitespace tokens
+- [x] Global daily provider budget; on exceed serve cache only, return `provider_budget_exceeded`, log loudly
+- [x] Structured log per provider call: name, latency, cache status, quota-counted — never the payload
+- [x] `api/v1/lookup.py` — `POST /lookup`, never writes a card
+- [x] Tests: cache hit path, cross-user cache sharing, quota, rate limit, input rejection, budget, chain fallthrough, provider fixtures
+- [x] Gates: ruff, mypy, pytest, frontend lint/tsc/build, compose health, no ERROR logs
+
+### M2 log
+
+**Shipped.** The full provider layer — `Meaning`/`LookupResult` and both Protocols
+verbatim from SPEC §6, FreeDictionary, Azure Translator (one batched call), Gemini as
+both structured dictionary and translation fallback, and fixture-backed `Fake*` siblings
+selected purely by whether a key is set. The three-stage pipeline (Redis 24h → global
+`lookup_cache` → chain), the global-not-per-user cache table, per-user daily quota keyed
+to local midnight, the reduced new-account quota, the 20/min per-user rate limit, the
+±64-char/4-token input gate, and the hard global provider budget.
+
+**Decided.** An unknown word is 404 `term_not_found`, not the 503 the spec reserves for
+a failed chain — telling a user to retry a typo forever is wrong (D8). `normalize_term`
+casefolds unconditionally so the cache key is stable, with the user's own spelling kept
+for the card's `display_term` (D9). `UZ_PREFER_LLM` ships on, and D7 records honestly
+that the comparison SPEC §6 asks for is unmeasured because no key exists, along with the
+exact procedure to run it.
+
+**Deferred.** Nothing from M2. The Azure and Gemini paths are complete but exercised
+against recorded fixtures only (BLOCKERS.md B3, B4).
+
+**Gate output.**
+```
+ruff check . → All checks passed!   ruff format --check . → 59 files already formatted
+mypy app/services app/providers app/srs app/telegram → Success: no issues found in 19 source files
+pytest -q → 86 passed
+  · POST /lookup run (en→uz) → 4 meanings, ipa present, cache=miss
+  · same word, different user → cache hit, identical meanings (global cache proven)
+  · cache hit leaves quota_used unchanged at 1
+  · Redis flushed → next request served cache=db, hit_count incremented
+  · 65 chars / 5 tokens / blank → 422 term_too_long, term_too_many_tokens, term_empty
+  · 21st lookup in a minute → 429 rate_limited + Retry-After
+  · quota exhausted → 429 quota_exceeded, but the cached word still returns 200
+  · budget exceeded → 429 provider_budget_exceeded, cache still serves
+  · whole chain raising → 503 provider_unavailable, details.retryable = true
+  · first provider raising → second answers, translated, gloss_en preserved
+  · every provider answering "no such word" → 404 term_not_found
+  · Azure: 6 strings → exactly 1 HTTP call, order preserved; length mismatch → error
+eslint → No issues found   tsc --noEmit → No errors found   vite build → built in 511ms
+compose: /health ok · tables: users, decks, lookup_cache, alembic_version
+         startup log: {"bot_enabled": false, "provider_fakes": true}
+         logs api | grep '"level": "ERROR"' → (none)
+         alembic check → No new upgrade operations detected
+```
