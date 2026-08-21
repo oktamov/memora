@@ -1,0 +1,35 @@
+# Memora — appended to the server's existing Caddyfile by deploy/deploy.sh.
+# Everything between the BEGIN/END markers is managed by that script; edit the
+# repo's deploy/Caddyfile.memora instead of editing the server copy by hand.
+
+memora.uz, www.memora.uz {
+	encode zstd gzip
+
+	# The API, the health probe, the OpenAPI docs and the Telegram webhook.
+	# The webhook deliberately sits outside /api/v1 (SPEC §7).
+	@backend path /api/* /health /docs /openapi.json /telegram/*
+	handle @backend {
+		reverse_proxy memora-api:8000
+	}
+
+	# Everything else is the Mini App itself.
+	handle {
+		reverse_proxy memora-web:80
+	}
+
+	header {
+		# Telegram loads the Mini App inside its own webview, so framing must stay
+		# allowed — X-Frame-Options here would break the app entirely.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/memora.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
