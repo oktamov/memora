@@ -66,6 +66,57 @@ entirely and push the working tree over SSH instead:
 ./deploy/ship.sh root@your-server
 ```
 
+## CI / CD
+
+`.github/workflows/deploy.yml` runs on every push to `main`: lint, types, 203 tests and
+a migration-drift check on the backend; lint, types and a production build on the
+frontend. Only if all of that passes does it SSH to the server and run `deploy.sh`,
+then poll `https://memora.uz/health` until the site answers — a deploy that leaves the
+site down fails the run rather than going green.
+
+Pull requests run the same checks without deploying. Documentation-only pushes are
+skipped entirely.
+
+### One-time setup
+
+Generate a key pair for the runner:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-memora" -f ~/.ssh/memora_deploy -N ""
+ssh-copy-id -i ~/.ssh/memora_deploy.pub root@168.119.187.64
+ssh-keyscan -H 168.119.187.64            # for SSH_KNOWN_HOSTS
+```
+
+Then in **Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `SSH_PRIVATE_KEY` | contents of `~/.ssh/memora_deploy` |
+| Secret | `SSH_HOST` | `168.119.187.64` |
+| Secret | `SSH_USER` | `root` |
+| Secret | `SSH_KNOWN_HOSTS` | output of the `ssh-keyscan` above |
+| Variable | `APP_DIR` | `/var/www/memora` (optional, this is the default) |
+| Variable | `MEMORA_DOMAIN` | `memora.uz` (optional, this is the default) |
+
+`SSH_KNOWN_HOSTS` is optional but worth setting: without it the runner trusts whatever
+answers on first contact, and the workflow prints a warning saying so.
+
+### Only what changed gets rebuilt
+
+`deploy.sh` runs `docker compose build`, and Docker's layer cache means a frontend-only
+push does not rebuild the Python dependency layer, and vice versa. Containers whose
+image did not change are left running untouched.
+
+### Hardening worth considering
+
+The deploy key is a root key held by GitHub, so anyone who can push to `main` can run
+anything on the server. To narrow that, restrict the key in the server's
+`~/.ssh/authorized_keys` so it can only run the deploy:
+
+```
+command="cd /var/www/memora && MEMORA_DIR=$PWD bash deploy/deploy.sh",no-port-forwarding,no-pty ssh-ed25519 AAAA...
+```
+
 ## Develop
 
 ```bash

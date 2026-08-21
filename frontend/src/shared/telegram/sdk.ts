@@ -109,8 +109,15 @@ export async function initTelegram(): Promise<LaunchContext> {
   const inTelegram = insideTelegram();
 
   if (inTelegram) {
-    initSdk();
+    safely(() => initSdk());
 
+    // Dismiss Telegram's loading placeholder FIRST, before anything that can block.
+    // If this waits behind the mounts and one of them never answers, the user is left
+    // staring at Telegram's placeholder with the app invisible behind it.
+    safely(() => miniAppReady());
+
+    // Each mount asks Telegram a question and waits for the answer. A client that
+    // never replies would otherwise hang boot forever, so every one is bounded.
     await Promise.all([
       tryMount(mountMiniApp),
       tryMount(mountViewport),
@@ -119,7 +126,6 @@ export async function initTelegram(): Promise<LaunchContext> {
       tryMount(mountSwipeBehavior),
     ]);
 
-    // Tells Telegram to drop its loading placeholder.
     safely(() => miniAppReady());
     // Without this the app opens at half height.
     safely(() => expandViewport());
@@ -210,9 +216,17 @@ export function getLaunchContext(): LaunchContext {
   );
 }
 
+/** How long any single SDK mount may take before boot stops waiting for it. */
+const MOUNT_TIMEOUT_MS = 3_000;
+
 async function tryMount(mount: () => unknown): Promise<void> {
   try {
-    await mount();
+    await Promise.race([
+      Promise.resolve(mount()),
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, MOUNT_TIMEOUT_MS);
+      }),
+    ]);
   } catch {
     // A component the current client does not support must not stop the app.
   }

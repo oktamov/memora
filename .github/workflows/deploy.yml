@@ -1,0 +1,152 @@
+name: CI / Deploy
+
+# Push to main → test → deploy. Documentation-only changes skip the whole thing:
+# rebuilding images because SPEC.md gained a paragraph helps nobody.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'MANUAL_TESTS.md'
+      - '.gitignore'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one midway: deploy.sh edits the shared
+# Caddyfile, and two runs racing on that file is how the other project on this server
+# gets broken.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: memora
+          POSTGRES_PASSWORD: memora
+          POSTGRES_DB: memora
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U memora -d memora"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      # tests/__init__.py derives `memora_test` and Redis DB 15 from these.
+      DATABASE_URL: postgresql+asyncpg://memora:memora@localhost:5432/memora
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-secret-long-enough-for-hmac-sha256
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - run: uv sync --frozen --all-groups
+
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy app/services app/providers app/srs app/telegram
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Migrations match the models
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  deploy:
+    name: Deploy
+    needs: [backend, frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Open an SSH session to the server
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+          # Pin the host key when it is configured. Falling back to ssh-keyscan trusts
+          # whatever answers on first contact, which is worth knowing about rather than
+          # doing silently.
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::SSH_KNOWN_HOSTS is unset; trusting the host key on first sight."
+            ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run the deploy
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ vars.APP_DIR || '/var/www/memora' }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$SSH_USER@$SSH_HOST" \
+            "set -e; cd '$APP_DIR' && MEMORA_DIR=\"\$PWD\" bash deploy/deploy.sh"
+
+      - name: Verify the site is actually serving the new build
+        env:
+          DOMAIN: ${{ vars.MEMORA_DOMAIN || 'memora.uz' }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl -fsS --max-time 10 "https://$DOMAIN/health" | grep -q '"status"'; then
+              echo "✓ https://$DOMAIN/health is answering"
+              exit 0
+            fi
+            echo "waiting for the site to come back ($attempt/12)…"
+            sleep 5
+          done
+          echo "::error::https://$DOMAIN/health did not respond after the deploy."
+          exit 1

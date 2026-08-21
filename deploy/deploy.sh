@@ -99,7 +99,13 @@ ENV_FILE="$APP_DIR/.env"
 
 # Keep whatever is already there; only fill in what is missing. This is what makes a
 # second run safe — rotating JWT_SECRET would sign every user out.
-read_env() { [[ -f "$ENV_FILE" ]] && sed -n "s/^$1=\(.*\)$/\1/p" "$ENV_FILE" | tail -1 || true; }
+#
+# Surrounding quotes are stripped, so a hand-edited KEY="value" does not round-trip
+# into KEY=""value"".
+read_env() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
 gen() { openssl rand -hex 32; }
 
 POSTGRES_PASSWORD="$(read_env POSTGRES_PASSWORD)"; POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(gen)}"
@@ -113,6 +119,28 @@ BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(read_env TELEGRAM_BOT_TOKEN)}"
 GEMINI_KEY="${GEMINI_API_KEY:-$(read_env GEMINI_API_KEY)}"
 AZURE_KEY="${AZURE_TRANSLATOR_KEY:-$(read_env AZURE_TRANSLATOR_KEY)}"
 AZURE_REGION="${AZURE_TRANSLATOR_REGION:-$(read_env AZURE_TRANSLATOR_REGION)}"
+
+# Tunables a hand-edited file may legitimately have changed. Hard-coding them below
+# would quietly revert an operator's deliberate choice on the next redeploy.
+UZ_PREFER_LLM_V="$(read_env UZ_PREFER_LLM)";       UZ_PREFER_LLM_V="${UZ_PREFER_LLM_V:-true}"
+BUDGET_V="$(read_env DAILY_PROVIDER_BUDGET)";      BUDGET_V="${BUDGET_V:-5000}"
+LOG_LEVEL_V="$(read_env LOG_LEVEL)";               LOG_LEVEL_V="${LOG_LEVEL_V:-INFO}"
+
+# Anything else the operator added by hand. The file is rewritten wholesale below, so
+# without this every unrecognised key would silently vanish on redeploy.
+MANAGED="POSTGRES_PASSWORD JWT_SECRET TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET \
+TELEGRAM_WEBHOOK_PATH_SECRET MINI_APP_URL GEMINI_API_KEY AZURE_TRANSLATOR_KEY \
+AZURE_TRANSLATOR_REGION UZ_PREFER_LLM DAILY_PROVIDER_BUDGET ENV LOG_LEVEL CORS_ORIGINS"
+
+extra_keys=""
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    grep -qw -- "$key" <<<"$MANAGED" && continue
+    extra_keys+="$line"$'\n'
+  done < "$ENV_FILE"
+fi
 
 umask 077
 cat > "$ENV_FILE" <<ENVFILE
@@ -129,14 +157,20 @@ GEMINI_API_KEY=$GEMINI_KEY
 AZURE_TRANSLATOR_KEY=$AZURE_KEY
 AZURE_TRANSLATOR_REGION=$AZURE_REGION
 
-UZ_PREFER_LLM=true
-DAILY_PROVIDER_BUDGET=5000
+UZ_PREFER_LLM=$UZ_PREFER_LLM_V
+DAILY_PROVIDER_BUDGET=$BUDGET_V
 ENV=prod
-LOG_LEVEL=INFO
+LOG_LEVEL=$LOG_LEVEL_V
 CORS_ORIGINS=["https://$DOMAIN"]
 ENVFILE
+
+if [[ -n "$extra_keys" ]]; then
+  printf '\n# Preserved from the previous file — added by hand, not managed here.\n' >> "$ENV_FILE"
+  printf '%s' "$extra_keys" >> "$ENV_FILE"
+fi
 umask 022
 ok "secrets in $ENV_FILE (0600)"
+[[ -n "$extra_keys" ]] && ok "kept $(grep -c . <<<"$extra_keys") hand-added setting(s)"
 
 [[ -n "$BOT_TOKEN" ]] || warn "TELEGRAM_BOT_TOKEN is empty — the bot stays off, the Mini App still works."
 [[ -n "$GEMINI_KEY$AZURE_KEY" ]] || warn "No provider key — lookups fall back to fixture data."
