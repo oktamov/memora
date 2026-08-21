@@ -267,7 +267,8 @@ fi
 
 printf '\n%s══ Memora is deployed ══%s\n\n' "$GREEN" "$OFF"
 printf '  Mini App   https://%s\n' "$DOMAIN"
-printf '  API docs   https://%s/docs\n' "$DOMAIN"
+printf '  Health     https://%s/health\n' "$DOMAIN"
+# /docs is deliberately off under ENV=prod, so it is not advertised here.
 printf '  Webhook    https://%s/telegram/webhook/%s\n' "$DOMAIN" "$WEBHOOK_PATH"
 printf '  Directory  %s\n' "$APP_DIR"
 printf '\n  Logs       docker compose -f %s/docker-compose.prod.yml logs -f api\n' "$APP_DIR"

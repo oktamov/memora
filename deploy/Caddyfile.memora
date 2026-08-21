@@ -5,8 +5,9 @@
 memora.uz, www.memora.uz {
 	encode zstd gzip
 
-	# The API, the health probe, the OpenAPI docs and the Telegram webhook.
-	# The webhook deliberately sits outside /api/v1 (SPEC §7).
+	# The API, the health probe and the Telegram webhook. The webhook deliberately
+	# sits outside /api/v1 (SPEC §7). /docs is routed too but answers 404 under
+	# ENV=prod, which is where the app disables it.
 	@backend path /api/* /health /docs /openapi.json /telegram/*
 	handle @backend {
 		reverse_proxy memora-api:8000

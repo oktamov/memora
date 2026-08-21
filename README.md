@@ -27,6 +27,38 @@ Without a `TELEGRAM_BOT_TOKEN` the bot stays unmounted and the app serves normal
 Without provider keys the fixture-backed `Fake*` providers answer lookups, so the whole
 pipeline still runs end to end.
 
+## Deploy to a server
+
+One command. It is idempotent — run it again to redeploy.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oktamov/memora/main/deploy/deploy.sh | sudo bash
+```
+
+With credentials, so the bot and the real providers come up too:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oktamov/memora/main/deploy/deploy.sh \
+  | sudo TELEGRAM_BOT_TOKEN=... GEMINI_API_KEY=... bash
+```
+
+**It publishes no host ports.** The target server already runs another project whose
+Caddy owns 80/443 and whose API owns 8000, so Memora is reachable only through that
+Caddy over a shared `memora_edge` network. The script connects the two, appends a
+marked site block to the existing Caddyfile, validates it, and reloads without a
+restart. If validation fails it restores the backup, so a mistake here cannot take the
+other project down.
+
+Secrets are generated on the first run and preserved afterwards — rotating
+`JWT_SECRET` would sign every user out.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MEMORA_DOMAIN` | `memora.uz` | the domain to serve |
+| `CADDY_CONTAINER` | `dublyaj-caddy` | the existing reverse proxy to extend |
+| `MEMORA_DIR` | `/opt/memora` | where the code lives |
+| `MEMORA_BRANCH` | `main` | branch to deploy |
+
 ## Develop
 
 ```bash
