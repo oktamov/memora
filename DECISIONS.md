@@ -245,3 +245,39 @@ backstop for two devices racing on the same word.
 
 **Why the tests missed it:** every duplicate test called the service directly. The
 regression test now goes through HTTP, where the session lifecycle is the real one.
+
+## D30 — Everything about the Gemini call was verified with live requests, not reasoning
+A guessed `responseSchema` casing "fix", then a model name copied out of an error
+message and never called, cost two deploy cycles and found nothing. `scripts/check_gemini.py`
+now makes a real request and prints what came back, and every claim below is something
+that call showed:
+
+* **`gemini-2.0-flash` is retired**; `gemini-2.5-flash` works. The default is settable
+  via `GEMINI_MODEL`, because the next retirement arrives as a production 404.
+* **Uppercase `responseSchema` types are accepted.** This was the earlier guess, and it
+  was never the bug — but it matches Google's REST reference, so it stays, now verified.
+* **Thinking had to be turned off.** 2.5-class models reason before answering by
+  default, which cost 1.5–3.1s on a task needing none of it — over the 4s provider
+  timeout often enough to fail. `thinkingBudget: 0` moved median latency to ~960ms.
+* **The model's IPA is inconsistent within one prompt** — `'wɔːtər`, `kiˈtɔb` and
+  `/ˌsɛrənˈdɪpɪti/` all came back from the same schema. `_normalise_ipa` settles on one
+  form, since the app renders the value verbatim in a mono face.
+* **Roughly one call in sixteen fails at the transport layer.** `_call_with_one_retry`
+  retries those once and only those; a 4xx earns the same refusal twice.
+
+## D31 — A cached fixture result is never served once a real provider is configured
+The database cache has no TTL. Words looked up while the app ran without keys were
+cached as placeholder text, so adding a Gemini key changed nothing for any of them —
+silently, with no way for the user to tell why. Found by testing the full stack after
+adding the key: `water` still answered `fake_dictionary` while `hurry` answered
+`gemini`.
+
+**Choice:** `lookup_cache.provider` already records which chain produced an entry, so
+an entry from a fixture provider is treated as a miss once real credentials exist, and
+overwritten on the next call. No manual cache clearing, on any environment.
+
+## D32 — The test suite clears provider credentials
+With a real `GEMINI_API_KEY` in a developer's `.env`, the whole suite ran against the
+live paid API — 85 seconds instead of 19, and billed. SPEC §12 says "providers are
+tested against recorded fixtures, never live APIs", so `tests/__init__.py` now blanks
+the credentials rather than trusting every future test to avoid them.

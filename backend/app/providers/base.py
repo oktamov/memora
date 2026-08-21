@@ -88,9 +88,23 @@ class TranslationProvider(Protocol):
 class ProviderError(Exception):
     """A provider failed. The chain catches this and falls through to the next."""
 
-    def __init__(self, provider: str, message: str) -> None:
+    def __init__(self, provider: str, message: str, *, retryable: bool = False) -> None:
         super().__init__(f"{provider}: {message}")
         self.provider = provider
+        #: True for connection-level failures, which are worth one immediate retry.
+        #: A 4xx is not: the same request will be refused the same way.
+        self.retryable = retryable
+
+
+def transport_error(provider: str, exc: Exception) -> ProviderError:
+    """A connection-level failure, named.
+
+    `str()` on an httpx timeout is empty, so the naive form produces "gemini: " and
+    tells nobody anything. The class name is the whole diagnosis here — ReadTimeout and
+    ConnectError call for opposite fixes.
+    """
+    detail = str(exc).strip() or repr(exc)
+    return ProviderError(provider, f"{type(exc).__name__}: {detail}", retryable=True)
 
 
 def http_error(provider: str, response: Any) -> ProviderError:

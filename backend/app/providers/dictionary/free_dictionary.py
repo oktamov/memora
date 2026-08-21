@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LookupResult, Meaning, ProviderError, http_error
+from app.providers.base import LookupResult, Meaning, ProviderError, http_error, transport_error
 
 _MAX_MEANINGS = 8
 _MAX_EXAMPLES_PER_MEANING = 2
@@ -36,7 +36,7 @@ class FreeDictionaryProvider:
         try:
             response = await self._client.get(url, timeout=settings.PROVIDER_TIMEOUT_SECONDS)
         except httpx.HTTPError as exc:
-            raise ProviderError(self.name, str(exc)) from exc
+            raise transport_error(self.name, exc) from exc
 
         if response.status_code == 404:
             # An honest "no such word", not a failure. The chain stops here.

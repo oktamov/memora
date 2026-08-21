@@ -40,7 +40,10 @@ class Settings(BaseSettings):
     AZURE_TRANSLATOR_REGION: str = ""
     AZURE_TRANSLATOR_ENDPOINT: str = "https://api.cognitive.microsofttranslator.com"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    # Google retires model names, and a retired one 404s the whole chain. Overridable
+    # with GEMINI_MODEL so a replacement needs a redeploy, not a code change — the
+    # 404 body names the successor Google wants you on.
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_ENDPOINT: str = "https://generativelanguage.googleapis.com/v1beta"
     FREE_DICTIONARY_ENDPOINT: str = "https://api.dictionaryapi.dev/api/v2/entries"
 

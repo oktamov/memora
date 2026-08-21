@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import ProviderError, http_error
+from app.providers.base import ProviderError, http_error, transport_error
 
 # Gemini's REST API types are an enum — OBJECT, ARRAY, STRING — and it is
 # case-sensitive. Lowercase JSON-Schema spelling is rejected with a 400.
@@ -79,7 +79,7 @@ class GeminiTranslationProvider:
                 timeout=settings.PROVIDER_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
-            raise ProviderError(self.name, str(exc)) from exc
+            raise transport_error(self.name, exc) from exc
 
         if response.status_code >= 400:
             raise http_error(self.name, response)

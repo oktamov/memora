@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LookupResult, Meaning, ProviderError, http_error
+from app.providers.base import LookupResult, Meaning, ProviderError, http_error, transport_error
 
 # Gemini's REST API types are an enum — OBJECT, ARRAY, STRING — and it is
 # case-sensitive. Lowercase JSON-Schema spelling is rejected with a 400.
@@ -86,12 +86,11 @@ class GeminiDictionaryProvider:
         if not meanings:
             return None
 
-        ipa = str(payload.get("ipa") or "").strip()
         return LookupResult(
             term=term,
             source_lang=source_lang,
             target_lang=target,
-            ipa=ipa or None,
+            ipa=_normalise_ipa(payload.get("ipa")),
             meanings=meanings,
             provider=self.name,
         )
@@ -115,6 +114,10 @@ class GeminiDictionaryProvider:
                 "responseMimeType": "application/json",
                 "responseSchema": _RESPONSE_SCHEMA,
                 "temperature": 0.2,
+                # 2.5-class models reason before answering unless told not to, which
+                # cost 1.5-3s on a task that needs none of it — enough to trip the 4s
+                # provider timeout and fail the whole chain. Measured, not assumed.
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
 
@@ -126,7 +129,7 @@ class GeminiDictionaryProvider:
                 timeout=settings.PROVIDER_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
-            raise ProviderError(self.name, str(exc)) from exc
+            raise transport_error(self.name, exc) from exc
 
         if response.status_code >= 400:
             raise http_error(self.name, response)
@@ -167,3 +170,23 @@ class GeminiDictionaryProvider:
                 )
             )
         return meanings
+
+
+def _normalise_ipa(raw: object) -> str | None:
+    """Return IPA in one consistent form: /ˈwɔːtər/.
+
+    The model is inconsistent about this — `'wɔːtər`, `kiˈtɔb` and `/ˌsɛrənˈdɪpɪti/` all
+    came back from the same prompt — and the app renders the value verbatim in a mono
+    face, so the inconsistency is visible to the user.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+
+    text = text.strip("/[]").strip()
+    if not text:
+        return None
+
+    # A plain apostrophe where the primary-stress mark belongs.
+    text = text.replace("'", "ˈ").replace("\u2019", "ˈ")
+    return f"/{text}/"

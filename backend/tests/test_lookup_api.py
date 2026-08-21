@@ -409,3 +409,42 @@ async def test_lookup_does_not_save_anything(
     decks = await client.get("/api/v1/decks", headers=auth_headers)
 
     assert decks.json() == []
+
+
+async def test_fixture_results_are_not_served_once_a_real_provider_exists(
+    client: AsyncClient, auth_headers: dict[str, str], app: FastAPI, db_session: AsyncSession
+) -> None:
+    """A word translated before the key was added must not stay placeholder forever.
+
+    The database cache has no TTL, so without this the user adds a Gemini key, sees no
+    change for any word they already tried, and has no way to tell why.
+    """
+    from app.providers.base import LookupResult, Meaning
+
+    # Cached while the app was running on fixtures.
+    first = await client.post("/api/v1/lookup", headers=auth_headers, json=RUN)
+    assert first.json()["provider"] == "fake_dictionary"
+
+    class RealProvider:
+        name = "gemini"
+
+        def supports(self, source_lang: str) -> bool:
+            del source_lang
+            return True
+
+        async def lookup(self, term: str, source_lang: str, target_lang: str) -> LookupResult:
+            return LookupResult(
+                term=term,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                ipa="/rʌn/",
+                meanings=[Meaning(pos="verb", definition="yugurmoq", gloss_en=None)],
+                provider=self.name,
+            )
+
+    app.state.provider_registry.gemini = RealProvider()
+
+    second = await client.post("/api/v1/lookup", headers=auth_headers, json=RUN)
+
+    assert second.json()["provider"] == "gemini"
+    assert second.json()["translation"] == "yugurmoq"

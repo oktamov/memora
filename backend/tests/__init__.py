@@ -48,6 +48,18 @@ async def _create_test_database_if_missing(url: str) -> None:
 
 
 os.environ["JWT_SECRET"] = os.environ.get("JWT_SECRET", "test-secret-long-enough-for-hmac-sha256")
+# SPEC §12: "Providers are tested against recorded fixtures, never live APIs."
+# A developer with real keys in `.env` would otherwise run the whole suite against
+# paid endpoints — slowly, flakily, and billed. Cleared here so the fakes are the only
+# thing the suite can reach.
+for _credential in (
+    "GEMINI_API_KEY",
+    "AZURE_TRANSLATOR_KEY",
+    "AZURE_TRANSLATOR_REGION",
+    "TELEGRAM_BOT_TOKEN",
+):
+    os.environ[_credential] = ""
+
 os.environ["DATABASE_URL"] = _test_database_url()
 os.environ["REDIS_URL"] = _test_redis_url()
 

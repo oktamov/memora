@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import time
 import unicodedata
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from redis.asyncio import Redis
 from sqlalchemy import update
@@ -30,13 +32,17 @@ from app.core.errors import NotFoundError, ProviderUnavailableError, ValidationE
 from app.core.logging import get_logger, log_provider_call
 from app.models.lookup import LookupCache
 from app.models.user import User
-from app.providers.base import LookupResult
+from app.providers.base import DictionaryProvider, LookupResult, ProviderError
 from app.providers.registry import ProviderRegistry
 from app.services import quota_service
 
 logger = get_logger(__name__)
 
 CACHE_MISS = "miss"
+
+#: Providers that serve fixture data. Anything they produced must never outlive the
+#: moment a real credential appears — see `_is_stale_fixture`.
+FIXTURE_PROVIDERS = ("fake_dictionary", "fake_translation")
 CACHE_REDIS = "redis"
 CACHE_DATABASE = "db"
 
@@ -119,12 +125,16 @@ async def lookup(
     limit = quota_service.effective_quota(user, now=moment)
 
     cached = await _from_redis(redis, normalized, source_lang, target_lang)
+    if cached is not None and _is_stale_fixture(cached, registry):
+        cached = None
     if cached is not None:
         used = await quota_service.quota_used(redis, user, now=moment)
         _log(normalized, source_lang, target_lang, cached.provider, 0.0, CACHE_REDIS, False, True)
         return LookupOutcome(cached, CACHE_REDIS, used, limit)
 
     from_db = await _from_database(session, normalized, source_lang, target_lang)
+    if from_db is not None and _is_stale_fixture(from_db, registry):
+        from_db = None
     if from_db is not None:
         await _write_redis(redis, normalized, source_lang, target_lang, from_db)
         used = await quota_service.quota_used(redis, user, now=moment)
@@ -246,7 +256,7 @@ async def _from_providers(
     for provider in chain.providers:
         started = time.perf_counter()
         try:
-            raw = await provider.lookup(term, source_lang, target_lang)  # type: ignore[call-arg]
+            raw = await _call_with_one_retry(provider, term, source_lang, target_lang)
         except Exception as exc:
             # ProviderError is the expected shape, but a provider bug of any kind must
             # not take the chain down — the next provider still gets its turn.
@@ -317,3 +327,44 @@ def _log(
         ok=ok,
         error=error,
     )
+
+
+async def _call_with_one_retry(
+    provider: DictionaryProvider, term: str, source_lang: str, target_lang: str
+) -> LookupResult | None:
+    """Call a provider, retrying once on a connection-level failure.
+
+    Measured at roughly one transient failure in sixteen live calls. Without a retry
+    that is a user typing a word, reading "the translator is not responding", and
+    typing it again — in an app whose entire premise is that they do nothing extra.
+    A 4xx is never retried: the same request earns the same refusal.
+    """
+    # Every provider in this chain takes target_lang; the two-argument form in the
+    # Protocol is the default for a plain dictionary, which nothing routes to now.
+    call = cast(
+        "Callable[[str, str, str], Awaitable[LookupResult | None]]",
+        provider.lookup,
+    )
+
+    try:
+        return await call(term, source_lang, target_lang)
+    except ProviderError as exc:
+        if not exc.retryable:
+            raise
+        logger.warning(
+            "provider_retry",
+            extra={"event": "provider_retry", "provider": exc.provider, "error": str(exc)},
+        )
+        return await call(term, source_lang, target_lang)
+
+
+def _is_stale_fixture(result: LookupResult, registry: ProviderRegistry) -> bool:
+    """True for a cached entry that fixture providers produced, once real ones exist.
+
+    The cache has no TTL in the database, so a word looked up before a provider key was
+    configured would keep serving placeholder text forever — the user adds a key,
+    nothing changes for any word they already tried, and there is no signal why.
+    Detected rather than cleared by hand, because the same thing happens on every
+    environment that runs without keys first.
+    """
+    return result.provider in FIXTURE_PROVIDERS and not registry.uses_fakes

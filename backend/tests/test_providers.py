@@ -142,7 +142,7 @@ async def test_gemini_returns_every_translation_via_a_hard_response_schema() -> 
         )
 
     async with mock_client(httpx.MockTransport(handler)) as client:
-        provider = GeminiDictionaryProvider(client, api_key="k", model="gemini-2.0-flash")
+        provider = GeminiDictionaryProvider(client, api_key="k", model="gemini-3.6-flash")
         result = await provider.lookup("run", "en", "uz")
 
     assert captured["generationConfig"]["responseMimeType"] == "application/json"
@@ -317,10 +317,12 @@ def test_lookup_result_round_trips_through_json() -> None:
 
 
 def test_the_gemini_schema_uses_the_api_enum_casing() -> None:
-    """Gemini's `Schema.type` is a case-sensitive enum, not JSON-Schema spelling.
+    """Gemini's REST reference declares `Schema.type` as an enum — OBJECT, ARRAY,
+    STRING — so that is the form sent, rather than JSON-Schema's lowercase spelling.
 
-    Lowercase "object" is rejected with a 400, which surfaces to the user as
-    "the translator is not responding" — a whole-chain failure caused by one string.
+    This pins the documented contract. It was *not* the cause of the production
+    failure that prompted it: that was a retired model name, which the response body
+    named outright once provider errors started carrying it.
     """
     from app.providers.dictionary.gemini import _RESPONSE_SCHEMA
 
@@ -354,3 +356,87 @@ async def test_a_provider_http_failure_carries_the_reason() -> None:
 
     assert "400" in str(exc.value)
     assert "Invalid JSON payload" in str(exc.value)
+
+
+def test_the_default_gemini_model_is_configurable() -> None:
+    """Google retires model names, and a retired one 404s the whole chain.
+
+    The default has to be overridable without a code change, because the fix arrives
+    as an error message in production, not as a deploy window.
+    """
+    from app.core.config import Settings
+
+    assert Settings(GEMINI_MODEL="gemini-9-future").GEMINI_MODEL == "gemini-9-future"
+
+
+async def test_a_transport_failure_is_named_and_marked_retryable() -> None:
+    """An httpx timeout stringifies to nothing, so the naive form logs "gemini: "."""
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("")
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = GeminiDictionaryProvider(client, api_key="k", model="m")
+        with pytest.raises(ProviderError) as exc:
+            await provider.lookup("run", "en", "uz")
+
+    assert "ReadTimeout" in str(exc.value)
+    assert exc.value.retryable is True
+
+
+async def test_an_http_failure_is_not_retryable() -> None:
+    """The same request earns the same refusal; retrying only wastes the user's time."""
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = GeminiDictionaryProvider(client, api_key="k", model="m")
+        with pytest.raises(ProviderError) as exc:
+            await provider.lookup("run", "en", "uz")
+
+    assert exc.value.retryable is False
+
+
+async def test_a_transient_failure_is_retried_once_and_succeeds() -> None:
+    """Measured at roughly one transient in sixteen live calls — enough that a user
+    would meet it, in an app whose premise is that they do nothing extra."""
+    attempts = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("")
+        return httpx.Response(
+            200, json=_gemini_envelope({"translations": [{"text": "suv", "pos": "noun"}]})
+        )
+
+    from app.services.lookup_service import _call_with_one_retry
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = GeminiDictionaryProvider(client, api_key="k", model="m")
+        result = await _call_with_one_retry(provider, "water", "en", "uz")
+
+    assert attempts == 2
+    assert result is not None
+    assert result.meanings[0].definition == "suv"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("'wɔːtər", "/ˈwɔːtər/"),
+        ("kiˈtɔb", "/kiˈtɔb/"),
+        ("/ˌsɛrənˈdɪpɪti/", "/ˌsɛrənˈdɪpɪti/"),
+        ("[rʌn]", "/rʌn/"),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_ipa_is_normalised_to_one_form(raw: object, expected: str | None) -> None:
+    """The model is inconsistent about slashes and stress marks within one prompt, and
+    the app renders the value verbatim in a mono face."""
+    from app.providers.dictionary.gemini import _normalise_ipa
+
+    assert _normalise_ipa(raw) == expected
