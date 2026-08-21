@@ -239,3 +239,62 @@ compose: /health ok · tables now include cards and card_states
          logs api | grep '"level": "ERROR"' → (none)
          alembic check → No new upgrade operations detected
 ```
+
+---
+
+## M4 — Review
+
+- [x] `srs/types.py` — `Rating` enum (1 again … 4 easy), `CardStateSnapshot`, `SchedulingResult`, `ReviewLogRecord`
+- [x] `srs/scheduler.py` — `schedule(state, rating, now) -> SchedulingResult`, pure: no database, no HTTP
+- [x] Map the spec's `state` 0-3 onto py-fsrs 4.x, which has no `New` (DECISIONS.md D1)
+- [x] Derive `reps`, `lapses`, `elapsed_days`, `scheduled_days` ourselves (D2)
+- [x] Per-user `fsrs_params` read from `users.fsrs_params`; null → library defaults
+- [x] `models/review.py` — `ReviewLog`, append-only, every column SPEC §5 lists
+- [x] Alembic migration `0005_review_logs`
+- [x] `services/review_service.py` — queue building and batch answering
+- [x] Queue order: learning/relearning first, then due reviews oldest-first, then new up to `daily_new_limit`
+- [x] `daily_review_limit` caps the session
+- [x] Batch answer in **one transaction**: update `card_states`, insert `review_logs`
+- [x] Clamp client `reviewed_at` to `[now - 10min, now]`
+- [x] `api/v1/review.py` — `GET /review/queue`, `POST /review/answer`, `GET /review/counts`
+- [x] Tests: `again` reappears in the same session, `easy` schedules days out, one review_log row per answer, ordering, limits, clamping, cross-user isolation
+- [x] Gates: ruff, mypy, pytest, frontend lint/tsc/build, compose health, no ERROR logs
+
+### M4 log
+
+**Shipped.** A pure FSRS wrapper with no database or HTTP in it, the append-only
+`review_logs` table carrying every column SPEC §5 lists, queue building in the spec's
+order, batch answering in one transaction, and `reviewed_at` clamping.
+
+**Decided.** Learning and relearning cards get a 20-minute learn-ahead window (D14) —
+without it the M4 acceptance criterion is unsatisfiable, because FSRS puts the first
+learning step a minute out and a strict `due <= now` queue could never show an `again`
+card again. Review cards are deliberately excluded from that window. A batch applies
+answers in the order sent, so a card rated `again` then `good` in one flush schedules
+from the right intermediate state (D15). The spec's 0-3 `state` column is mapped onto
+py-fsrs 4.x, which has no `New`, and `reps`/`lapses`/`elapsed_days`/`scheduled_days` are
+derived here because the library dropped them (D1, D2).
+
+**Deferred.** The FSRS optimizer, per SPEC §9. `users.fsrs_params` exists and is read
+(null → library defaults); nothing writes it in v1.
+
+**Gate output.**
+```
+ruff check . → All checks passed!   ruff format --check . → 72 files already formatted
+mypy app/services app/providers app/srs app/telegram → Success: no issues found in 23 source files
+pytest -q → 153 passed
+  · rated again → due < 30 min out AND back in the queue          ← M4 acceptance
+  · rated easy → scheduled_days >= 1, due > 1 day out, queue empty ← M4 acceptance
+  · 3 answers → exactly 3 review_logs rows, ratings 1/3/4         ← M4 acceptance
+  · same card twice in one batch → 2 log rows, second scheduled from the first's state
+  · queue order: learning card, then the 30-day-overdue review, then the new one
+  · due reviews oldest-first; not-yet-due and suspended cards excluded
+  · daily_new_limit=2 with 4 new cards → 2 items, new_remaining=2
+  · unknown card in a batch → 404 and *nothing* written (one transaction)
+  · reviewed_at +400 days → clamped to now; -30 days → clamped to now-10min
+  · learn-ahead does not pull a review card due in 5 minutes into the queue
+  · 12 consecutive scheduler runs, no fuzz-induced flakiness
+eslint → No issues found   tsc --noEmit → No errors found   vite build → built in 548ms
+compose: /health ok · review_logs present · logs grep ERROR → (none)
+         alembic check → No new upgrade operations detected
+```

@@ -57,3 +57,20 @@ SPEC §7 says cursor-based. The cursor is the card's UUIDv7, base64url-encoded �
 are time-ordered, so `id < cursor` with `ORDER BY id DESC` is a correct newest-first
 keyset with no extra sort column. Offsets would drift every time a card is saved
 mid-scroll, which on this screen is the normal case.
+
+## D14 — Learning cards have a 20-minute learn-ahead window
+SPEC §11 M4 requires a card rated `again` to reappear in the **same** session, but FSRS
+puts the first learning step about a minute out, so a strict `due <= now` queue could
+never show it again — the acceptance criterion and the query contradict each other.
+**Choice:** learning and relearning cards count as due when
+`due <= now + 20 minutes`. Anki solves the same problem the same way (its "learn ahead
+limit"). The window deliberately does **not** apply to review cards: those are days
+apart and pulling them forward would defeat the scheduling. `review_service.counts()`
+uses the identical predicate so the badge and the queue never disagree.
+
+## D15 — A batch of answers is applied in the order the client sent it
+SPEC §7 makes `/review/answer` a batch endpoint, which means one card can legitimately
+appear twice in a batch — rated `again`, shown again, then rated `good`. **Choice:**
+iterate the answers in order, each scheduling from the state the previous one produced,
+inside the single transaction. Deduplicating or applying them in parallel would compute
+the second answer from a stale state and write a `review_logs` row that never happened.
