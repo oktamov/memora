@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LookupResult, Meaning, ProviderError
+from app.providers.base import LookupResult, Meaning, ProviderError, http_error
 
 _MAX_TRANSLATIONS = 6
 
@@ -112,7 +112,7 @@ class AzureDictionaryProvider:
             raise ProviderError(self.name, str(exc)) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.name, f"HTTP {response.status_code}")
+            raise http_error(self.name, response)
 
         try:
             payload = response.json()

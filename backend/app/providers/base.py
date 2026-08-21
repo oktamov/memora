@@ -91,3 +91,18 @@ class ProviderError(Exception):
     def __init__(self, provider: str, message: str) -> None:
         super().__init__(f"{provider}: {message}")
         self.provider = provider
+
+
+def http_error(provider: str, response: Any) -> ProviderError:
+    """An HTTP failure, carrying the provider's own explanation.
+
+    A bare status code cannot be acted on: "gemini: HTTP 400" says nothing about which
+    field the API rejected, and the response body is the only place that does. Truncated
+    because these are logged, and never containing the request — so a key cannot leak.
+    """
+    try:
+        detail = response.text[:400].replace("\n", " ").strip()
+    except Exception:  # a body that cannot be read must not mask the status
+        detail = ""
+    suffix = f" — {detail}" if detail else ""
+    return ProviderError(provider, f"HTTP {response.status_code}{suffix}")

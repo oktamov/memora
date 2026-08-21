@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { useMe } from '@/features/auth/hooks';
 import { LanguagePair } from '@/features/lookup/components/LanguagePair';
 import { LookupInput } from '@/features/lookup/components/LookupInput';
 import { TranslationCard } from '@/features/lookup/components/TranslationCard';
-import { useTranslate, useUpdateLanguages } from '@/features/lookup/hooks';
+import { useTranslate } from '@/features/lookup/hooks';
+import { useLanguagePair } from '@/features/lookup/useLanguagePair';
 import { messageFor } from '@/shared/lib/errorMessages';
 import { hapticRating } from '@/shared/telegram/haptics';
 import { EmptyState } from '@/shared/ui/EmptyState';
@@ -24,22 +24,9 @@ export function LookupPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTerm = searchParams.get('q') ?? '';
 
-  const me = useMe();
   const translate = useTranslate();
-  const updateLanguages = useUpdateLanguages();
+  const { source, target, change, loading } = useLanguagePair();
   const toast = useToast();
-
-  const [pair, setPair] = useState<{ source: string; target: string } | null>(null);
-
-  // Seed the picker from the user's remembered pair, once it arrives.
-  useEffect(() => {
-    if (me.data && !pair) {
-      setPair({ source: me.data.source_lang, target: me.data.native_lang });
-    }
-  }, [me.data, pair]);
-
-  const source = pair?.source ?? 'en';
-  const target = pair?.target ?? 'uz';
 
   const run = (term: string) => {
     setSearchParams({ q: term }, { replace: true });
@@ -57,27 +44,21 @@ export function LookupPage() {
 
   // Run the term handed over from the Decks screen, once.
   useEffect(() => {
-    if (initialTerm && pair && !translate.data && !translate.isPending) {
+    if (initialTerm && !loading && !translate.data && !translate.isPending) {
       run(initialTerm);
     }
     // Keyed on the term and the pair alone: re-running on every render would fire a
     // paid API call per render, which SPEC §13 calls out by name.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTerm, pair]);
-
-  const changePair = (nextSource: string, nextTarget: string) => {
-    setPair({ source: nextSource, target: nextTarget });
-    // Remembered server-side, so the bot and the next session agree with this screen.
-    updateLanguages.mutate({ source_lang: nextSource, native_lang: nextTarget });
-  };
+  }, [initialTerm, loading]);
 
   return (
     <div className="space-y-4">
       <LanguagePair
         source={source}
         target={target}
-        disabled={me.isPending}
-        onChange={changePair}
+        disabled={loading}
+        onChange={change}
       />
 
       <LookupInput

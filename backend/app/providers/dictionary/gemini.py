@@ -17,19 +17,21 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LookupResult, Meaning, ProviderError
+from app.providers.base import LookupResult, Meaning, ProviderError, http_error
 
+# Gemini's REST API types are an enum — OBJECT, ARRAY, STRING — and it is
+# case-sensitive. Lowercase JSON-Schema spelling is rejected with a 400.
 _RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "object",
+    "type": "OBJECT",
     "properties": {
-        "ipa": {"type": "string"},
+        "ipa": {"type": "STRING"},
         "translations": {
-            "type": "array",
+            "type": "ARRAY",
             "items": {
-                "type": "object",
+                "type": "OBJECT",
                 "properties": {
-                    "text": {"type": "string"},
-                    "pos": {"type": "string"},
+                    "text": {"type": "STRING"},
+                    "pos": {"type": "STRING"},
                 },
                 "required": ["text"],
             },
@@ -127,7 +129,7 @@ class GeminiDictionaryProvider:
             raise ProviderError(self.name, str(exc)) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.name, f"HTTP {response.status_code}")
+            raise http_error(self.name, response)
 
         try:
             envelope = response.json()

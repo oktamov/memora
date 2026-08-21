@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import ProviderError
+from app.providers.base import ProviderError, http_error
 
 _MAX_TEXTS_PER_REQUEST = 100
 
@@ -57,7 +57,7 @@ class AzureTranslationProvider:
             raise ProviderError(self.name, str(exc)) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.name, f"HTTP {response.status_code}")
+            raise http_error(self.name, response)
 
         try:
             payload = response.json()

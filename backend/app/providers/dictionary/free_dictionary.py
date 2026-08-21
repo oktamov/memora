@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LookupResult, Meaning, ProviderError
+from app.providers.base import LookupResult, Meaning, ProviderError, http_error
 
 _MAX_MEANINGS = 8
 _MAX_EXAMPLES_PER_MEANING = 2
@@ -42,7 +42,7 @@ class FreeDictionaryProvider:
             # An honest "no such word", not a failure. The chain stops here.
             return None
         if response.status_code >= 400:
-            raise ProviderError(self.name, f"HTTP {response.status_code}")
+            raise http_error(self.name, response)
 
         try:
             entries = response.json()

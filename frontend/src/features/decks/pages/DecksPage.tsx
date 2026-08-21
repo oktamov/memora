@@ -5,7 +5,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useDecks } from '@/features/decks/hooks';
 import { CreateDeckSheet } from '@/features/decks/components/CreateDeckSheet';
 import { DeckCard } from '@/features/decks/components/DeckCard';
+import { LanguagePair } from '@/features/lookup/components/LanguagePair';
 import { LookupInput } from '@/features/lookup/components/LookupInput';
+import { useLanguagePair } from '@/features/lookup/useLanguagePair';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
@@ -18,11 +20,22 @@ import { ScreenSpinner } from '@/shared/ui/Spinner';
 export function DecksPage() {
   const navigate = useNavigate();
   const decks = useDecks();
+  const pair = useLanguagePair();
   const [creating, setCreating] = useState(false);
 
   return (
     <div className="space-y-5">
-      <LookupInput onSubmit={(term) => navigate(`/lookup?q=${encodeURIComponent(term)}`)} />
+      {/* The pair sits with the input, on every screen that offers one — a picker the
+          user has to go looking for is a picker they will not find. */}
+      <div className="space-y-3">
+        <LanguagePair
+          source={pair.source}
+          target={pair.target}
+          disabled={pair.loading}
+          onChange={pair.change}
+        />
+        <LookupInput onSubmit={(term) => navigate(`/lookup?q=${encodeURIComponent(term)}`)} />
+      </div>
 
       {decks.isPending ? <ScreenSpinner /> : null}
       {decks.isError ? <ErrorState error={decks.error} onRetry={() => void decks.refetch()} /> : null}

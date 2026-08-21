@@ -12,11 +12,13 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.providers.base import ProviderError
+from app.providers.base import ProviderError, http_error
 
+# Gemini's REST API types are an enum — OBJECT, ARRAY, STRING — and it is
+# case-sensitive. Lowercase JSON-Schema spelling is rejected with a 400.
 _RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"translations": {"type": "array", "items": {"type": "string"}}},
+    "type": "OBJECT",
+    "properties": {"translations": {"type": "ARRAY", "items": {"type": "STRING"}}},
     "required": ["translations"],
 }
 
@@ -80,7 +82,7 @@ class GeminiTranslationProvider:
             raise ProviderError(self.name, str(exc)) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.name, f"HTTP {response.status_code}")
+            raise http_error(self.name, response)
 
         try:
             envelope = response.json()

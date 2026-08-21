@@ -314,3 +314,43 @@ def test_lookup_result_round_trips_through_json() -> None:
     )
 
     assert LookupResult.from_dict(original.to_dict()) == original
+
+
+def test_the_gemini_schema_uses_the_api_enum_casing() -> None:
+    """Gemini's `Schema.type` is a case-sensitive enum, not JSON-Schema spelling.
+
+    Lowercase "object" is rejected with a 400, which surfaces to the user as
+    "the translator is not responding" — a whole-chain failure caused by one string.
+    """
+    from app.providers.dictionary.gemini import _RESPONSE_SCHEMA
+
+    def types(node: object) -> list[str]:
+        found: list[str] = []
+        if isinstance(node, dict):
+            value = node.get("type")
+            if isinstance(value, str):
+                found.append(value)
+            for child in node.values():
+                found.extend(types(child))
+        return found
+
+    collected = types(_RESPONSE_SCHEMA)
+    assert collected, "the schema declares no types at all"
+    assert all(name.isupper() for name in collected), collected
+
+
+async def test_a_provider_http_failure_carries_the_reason() -> None:
+    """ "HTTP 400" alone cannot be acted on; the body is the only place that says why."""
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"error": {"message": "Invalid JSON payload received at generationConfig"}}
+        )
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = GeminiDictionaryProvider(client, api_key="k", model="m")
+        with pytest.raises(ProviderError) as exc:
+            await provider.lookup("run", "en", "uz")
+
+    assert "400" in str(exc.value)
+    assert "Invalid JSON payload" in str(exc.value)
