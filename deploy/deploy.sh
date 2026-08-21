@@ -76,7 +76,11 @@ fi
 
 step "Fetching the code"
 
-if [[ -d "$APP_DIR/.git" ]]; then
+if [[ "${MEMORA_SKIP_FETCH:-0}" == "1" ]]; then
+  # deploy/ship.sh already put the code here over rsync; pulling now would discard it.
+  [[ -f "$APP_DIR/docker-compose.prod.yml" ]] || die "No code in $APP_DIR."
+  ok "using the code already in $APP_DIR"
+elif [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
   git -C "$APP_DIR" reset --hard --quiet "origin/$BRANCH"
   ok "updated $APP_DIR to $(git -C "$APP_DIR" rev-parse --short HEAD)"

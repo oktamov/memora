@@ -59,6 +59,13 @@ Secrets are generated on the first run and preserved afterwards — rotating
 | `MEMORA_DIR` | `/opt/memora` | where the code lives |
 | `MEMORA_BRANCH` | `main` | branch to deploy |
 
+If the repository is private, or you want to deploy uncommitted work, skip GitHub
+entirely and push the working tree over SSH instead:
+
+```bash
+./deploy/ship.sh root@your-server
+```
+
 ## Develop
 
 ```bash
