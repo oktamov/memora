@@ -175,3 +175,10 @@ an unauthenticated app.
 **How this was caught:** on a real phone, via the bot. It cannot be reproduced in a
 browser, because outside Telegram every launch path lacks initData and the same error
 screen is the *correct* output.
+
+**Two follow-ons the first fix missed.** A reply keyboard is *persistent*: switching
+`/start` to an inline button left every existing user still holding the broken one, so
+`/start` now sends `ReplyKeyboardRemove()` first and the inline button second — one
+`reply_markup` per message means this needs two messages. And the app now calls
+`set_chat_menu_button` on startup, so the persistent entry point SPEC §9a wanted exists
+without anyone having to remember a BotFather step.

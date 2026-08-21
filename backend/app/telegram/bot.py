@@ -10,6 +10,7 @@ import httpx
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import MenuButtonWebApp, WebAppInfo
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,3 +73,30 @@ async def configure_webhook(bot: Bot) -> None:
         allowed_updates=["message", "callback_query"],
     )
     logger.info("webhook_registered", extra={"event": "webhook_registered"})
+
+
+async def configure_menu_button(bot: Bot) -> None:
+    """Set the chat menu button, for every chat, to open the Mini App.
+
+    SPEC §9a asks for a *persistent* way to open the app. The menu button is the only
+    persistent affordance that also carries `initData` — a reply-keyboard button opens
+    the app unauthenticated (DECISIONS.md D26). Setting it here rather than in BotFather
+    means a fresh deployment is correct without anyone remembering a manual step.
+    """
+    if not settings.MINI_APP_URL.startswith("https://"):
+        logger.warning(
+            "menu_button_not_set",
+            extra={
+                "event": "menu_button_not_set",
+                "reason": "Telegram requires an HTTPS Mini App URL",
+            },
+        )
+        return
+
+    await bot.set_chat_menu_button(
+        menu_button=MenuButtonWebApp(
+            text="Memorani ochish",
+            web_app=WebAppInfo(url=settings.MINI_APP_URL),
+        )
+    )
+    logger.info("menu_button_set", extra={"event": "menu_button_set"})

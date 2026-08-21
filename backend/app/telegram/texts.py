@@ -11,6 +11,8 @@ GREETING = (
     "kerakligini bugungi to'plamga saqlaysiz."
 )
 
+OPEN_PROMPT = "Boshlash uchun ilovani oching:"
+
 TERM_TOO_LONG = "So'z juda uzun. Bu ilova so'z va qisqa iboralar uchun — ko'pi bilan 64 belgi."
 TERM_TOO_MANY_TOKENS = "Bu ilova so'z va qisqa iboralar uchun — ko'pi bilan 4 ta so'z."
 TERM_EMPTY = "So'z kiritilmadi."

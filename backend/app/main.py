@@ -20,7 +20,12 @@ from app.core.logging import configure_logging, get_logger
 from app.core.redis import create_redis
 from app.db.session import async_session_factory, engine
 from app.providers.registry import ProviderRegistry
-from app.telegram.bot import build_bot, build_dispatcher, configure_webhook
+from app.telegram.bot import (
+    build_bot,
+    build_dispatcher,
+    configure_menu_button,
+    configure_webhook,
+)
 from app.telegram.scheduler import build_scheduler
 
 logger = get_logger(__name__)
@@ -58,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.scheduler.start()
         try:
             await configure_webhook(app.state.bot)
+            await configure_menu_button(app.state.bot)
         except Exception as exc:
             # A webhook we could not register is worth shouting about, but it must not
             # stop the API from serving the Mini App.

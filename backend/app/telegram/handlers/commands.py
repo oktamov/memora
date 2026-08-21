@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.core.logging import get_logger
 from app.models.user import User
@@ -48,9 +48,12 @@ async def handle_start(message: Message, context: BotContext) -> None:
     user = await resolve_user(context, message.from_user)
     logger.info("bot_start", extra={"event": "bot_start", "user_id": str(user.id)})
 
-    # An inline WebApp button, not the reply keyboard: only this launch type carries
-    # initData, which is the app's entire basis for authentication (DECISIONS.md D26).
-    await message.answer(texts.GREETING, reply_markup=keyboards.open_app_button())
+    # Two messages, deliberately. A message carries exactly one reply_markup, and both
+    # jobs are needed: clear any reply keyboard left over from an older version — those
+    # buttons open the app with no initData and strand the user on the error screen
+    # (DECISIONS.md D26) — and then offer an inline button, which authenticates.
+    await message.answer(texts.GREETING, reply_markup=ReplyKeyboardRemove())
+    await message.answer(texts.OPEN_PROMPT, reply_markup=keyboards.open_app_button())
 
 
 @router.message(F.text == keyboards.REVIEW_LABEL)

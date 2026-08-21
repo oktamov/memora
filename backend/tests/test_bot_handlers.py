@@ -96,12 +96,15 @@ async def test_start_upserts_the_user_and_offers_the_web_app_button(
 
     await commands.handle_start(message, context=context)  # type: ignore[arg-type]
 
-    assert len(message.sent) == 1
+    assert len(message.sent) == 2
     assert "Memora" in message.sent[0].text
 
-    # An *inline* WebApp button. A reply-keyboard button opens the app without any
-    # initData, leaving it unable to authenticate from inside Telegram (D26).
-    button = message.sent[0].reply_markup.inline_keyboard[0][0]
+    # The first message clears any reply keyboard a previous version left behind: its
+    # buttons open the app with no initData and strand the user on the error screen.
+    assert message.sent[0].reply_markup.remove_keyboard is True
+
+    # The second offers an *inline* WebApp button, which does carry initData (D26).
+    button = message.sent[1].reply_markup.inline_keyboard[0][0]
     assert button.text == keyboards.OPEN_APP_LABEL
     assert button.web_app is not None
 
