@@ -442,3 +442,54 @@ compose (bot enabled with a local dev token):
   POST /telegram/webhook/<correct>  (correct header)  → 200
   logs api | grep '"level": "ERROR"' → (none)
 ```
+
+---
+
+## M7 — Stats + polish
+
+- [x] `services/stats_service.py` — streak, reviews per day (90d), retention rate, total cards
+- [x] Streak computed in the **user's** timezone, not UTC
+- [x] Retention = share of review-state answers rated ≥ hard (not new/learning)
+- [x] `api/v1/stats.py` — `GET /stats/overview`
+- [x] Tests for every stat, including timezone-sensitive streak edges
+- [x] Frontend: Stats screen — streak, activity heatmap, retention, totals
+- [x] Heatmap reads as a notebook, not a SaaS dashboard (SPEC §10)
+- [x] Empty states everywhere are invitations, not "Ma'lumot yo'q"
+- [x] Error states on every screen, with Uzbek copy per error code
+- [x] Final pass: full gate suite, compose up, no ERROR logs
+
+### M7 log
+
+**Shipped.** `GET /stats/overview` with streak, longest streak, 90-day activity,
+retention and totals — all computed in the user's own local days. The Stats screen with
+a saffron heatmap that reads as marks on paper rather than a SaaS dashboard, plus a
+render error boundary, since a crashed Mini App leaves the user with no browser chrome
+and no way to reload.
+
+**Decided.** Retention counts only answers on cards already in the `review` state:
+failing a card you are still learning is the algorithm working, not a memory lapse, and
+counting it would penalise the users studying hardest (D23). A day not yet reviewed does
+not break the streak — otherwise every user reads zero each morning until they open the
+app (D24). The activity series always returns all 90 days including zeros, because the
+gaps are what stop a heatmap from implying a longer streak than the user has (D25).
+
+**Deferred.** Nothing.
+
+**Gate output.**
+```
+ruff check . → All checks passed!   ruff format --check . → 89 files already formatted
+mypy app/services app/providers app/srs app/telegram → Success: no issues found in 33 source files
+pytest -q → 203 passed
+  · a new user gets streak 0, retention null (not 0.0 — no data and total failure
+    must not look the same)
+  · 3 consecutive local days → streak 3; a gap → streak 1, longest 4
+  · today unreviewed at 9am → the streak still counts from yesterday
+  · 17:00 and 20:00 UTC on 1 March, Tashkent → two local days, streak 2
+  · a failed *new* card does not drag retention down; `hard` counts as remembered
+  · activity always returns 90 entries, zeros included
+eslint → No issues found   tsc --noEmit → No errors found   vite build → built in 1.09s
+compose: /health ok · all 7 tables present · logs grep ERROR → (none)
+         alembic check → No new upgrade operations detected
+live check: /stats/overview → streak 1, 3 cards, 4 reviews today, retention null
+            (correct — every answer so far was on a new or learning card)
+```

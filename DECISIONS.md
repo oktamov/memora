@@ -134,3 +134,23 @@ the review queue uses — so the number the user reads is the number they will s
 local-hour comparison stays in Python because it depends on each user's IANA zone;
 the reminder-enabled population is small enough that this is cheaper than a per-row
 `AT TIME ZONE`.
+
+## D23 — Retention counts only review-state answers
+SPEC §7 asks for a "retention rate" without defining the denominator. **Choice:**
+the share of answers on cards already in the `review` state that were not rated
+`again`. New and learning cards are excluded deliberately — failing a card you are
+still learning is the algorithm working, not a memory lapse, and counting those would
+push the number down hardest for the users studying most. `hard` counts as remembered,
+since the card was recalled. Before any review-state answer exists the value is `null`,
+not `0.0`: no data and perfect failure should not look the same.
+
+## D24 — Today not being reviewed yet does not break the streak
+A streak measured strictly to today would read zero every morning until the user opens
+the app, which is both wrong and discouraging. **Choice:** if today has no reviews, the
+run is measured from yesterday. Two consecutive empty days end it. This is what every
+SRS app does and what a user expects to see at 9am.
+
+## D25 — The activity series always returns all 90 days, zeros included
+The heatmap needs the gaps as much as the marks; returning only active days would let
+the client close the gaps up and render a longer streak than the user has. The service
+fills the range in Python after grouping, so the API contract is a fixed-length series.
