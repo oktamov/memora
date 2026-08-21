@@ -74,3 +74,38 @@ appear twice in a batch — rated `again`, shown again, then rated `good`. **Cho
 iterate the answers in order, each scheduling from the state the previous one produced,
 inside the single transaction. Deduplicating or applying them in parallel would compute
 the second answer from a stale state and write a `review_logs` row that never happened.
+
+## D16 — The client reads raw `initData`; it never depends on parsing it
+`retrieveLaunchParams()` validates the *parsed* initData against a strict schema — the
+installed SDK requires a `signature` field, for one — and throws the entire result away
+if any single field is missing or newly added by Telegram. That took `initDataRaw` with
+it, so the app silently never authenticated. Caught by driving the real Mini App in a
+browser against the real API.
+**Choice:** try the SDK first, then fall back to reading `tgWebAppData` straight from
+the launch hash or Telegram's cached launch parameters. The raw string is the only
+thing we send onward, and its authenticity is established by the server's HMAC check
+(SPEC §7) — never by a client-side shape check. A parser one Telegram release behind
+would otherwise lock every user out of an app that has no other way in.
+
+## D17 — `isTMA()` decides only whether SDK components mount
+Same incident, second cause. The environment probe is deliberately conservative and
+answers false in clients that did launch us with real parameters. Gating initData
+retrieval behind it dropped authentication for those users. **Choice:** the probe now
+decides only whether the SDK's components are mounted; launch parameters are read
+unconditionally.
+
+## D18 — `index.html` is served `no-cache`; hashed assets stay immutable
+A browser-cached `index.html` kept pointing at a bundle from a previous build, so a
+redeploy appeared to change nothing. **Choice:** `Cache-Control: no-cache,
+must-revalidate` on `index.html` and every SPA fallback route; `immutable` stays on
+`/assets/` since those filenames are content-hashed. Without this, a Mini App update
+reaches users only when their webview happens to evict the entry.
+
+## D19 — Ladder intervals are estimated client-side
+SPEC §10 requires the next-due interval under each of the four stops. Answering exactly
+would mean running FSRS four times per card on the server and shipping all four
+outcomes with the queue. **Choice:** estimate from the card's current stability in the
+client. The ladder exists so the user senses the consequence before choosing; the
+authoritative interval comes back from `/review/answer` and is what actually gets
+stored. Should the estimate ever need to be exact, the queue response is where the four
+values would go.

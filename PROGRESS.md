@@ -298,3 +298,84 @@ eslint → No issues found   tsc --noEmit → No errors found   vite build → b
 compose: /health ok · review_logs present · logs grep ERROR → (none)
          alembic check → No new upgrade operations detected
 ```
+
+---
+
+## M5 — Mini App
+
+**SDK integration (SPEC §10, §13)**
+- [x] `init()`, `ready()`, `expand()`, `disableVerticalSwipe()` before anything renders
+- [x] `disableVerticalSwipe()` — without it a downward drag closes the app mid-review
+- [x] Native `BackButton` driven by the router; no hand-drawn back arrow anywhere
+- [x] `MainButton` for the one primary action per screen; **not** in review
+- [x] Haptics: `impactOccurred('light')` on flip, `notificationOccurred` on rating
+- [x] Theme from `colorScheme` only — never Telegram's individual `themeParams`
+- [x] Viewport from `viewportStableHeight`; **no `100vh` anywhere** in the codebase
+- [x] `startapp` deep link read on launch; `review` opens the review session directly
+- [x] CloudStorage for last-used-deck only, never card data
+
+**Data layer**
+- [x] Typed fetch client, error envelope parsing, `Authorization: Bearer`
+- [x] Silent auth: `POST /auth/telegram` with initData on boot, re-auth on 401
+- [x] All server state through TanStack Query — no `useEffect` fetching
+- [x] Zustand holds only the in-flight review session
+- [x] Flush pending answers every 5, on session end, and on `visibilitychange`
+- [x] Optimistic rating: advance to the next card immediately, never block on the flush
+
+**Screens**
+- [x] Decks — pinned daily deck, language pair, card and due counts, persistent lookup input
+- [x] Lookup — explicit submit only (no search-as-you-type), selectable meaning chips, own sentence, deck picker
+- [x] Deck detail — card list, search, edit, move, delete
+- [x] Review — one card, flip, the confidence ladder
+- [x] Stats — placeholder route; the real screen is M7
+
+**Design (SPEC §10)**
+- [x] Palette exactly as specified; review mode uses `--ink` in both themes
+- [x] Bricolage Grotesque / Source Sans 3 / JetBrains Mono in their three roles
+- [x] Confidence ladder: one continuous madder→sage track, four stops, interval under each
+- [x] Review screen silent otherwise — no chrome, no nav, no progress bar
+- [x] Card flip is the single orchestrated motion; cross-fades under reduced-motion
+- [x] Uzbek copy, sentence case, constant action names, invitational empty states
+- [x] Gates: frontend lint/tsc/build, backend suite still green, compose health, no ERROR logs
+
+### M5 log
+
+**Shipped.** All five screens against the real API, the SDK integration per SPEC §10,
+and the design direction realised: the notebook for browsing, the dark room for review,
+and the confidence ladder as the one bold element.
+
+**Verified in a real browser, driving the real stack.** Signed initData was generated
+with a local dev bot token and passed through the launch hash exactly as Telegram does
+it. Observed end to end: silent authentication with no login screen; the daily deck
+pinned with its saffron badge; a card flipped, rated, and the next one appearing
+immediately; `run` rated "Yana" reappearing later in the same session; the session
+ending and flushing four `review_logs` rows — one per answer, each recording the state
+*before* the review. The 20-minute learn-ahead then correctly returned the two learning
+cards to the queue. The lookup screen showed `4/30` — the SPEC §8.5 new-account quota
+cap, live.
+
+**Three real bugs the browser check caught**, each written up in DECISIONS.md:
+the SDK's strict initData parse discarded `initDataRaw` over a missing `signature`
+field, so the app never authenticated (D16); the conservative `isTMA()` probe gated
+initData retrieval as well as component mounting (D17); and a browser-cached
+`index.html` pinned an old bundle across redeploys (D18). The first two would have
+locked every user out of an app whose only entry point is Telegram.
+
+**Decided.** Ladder intervals are estimated client-side rather than having the server
+run FSRS four times per card; the authoritative interval comes back from
+`/review/answer` (D19).
+
+**Deferred.** The Stats screen is a placeholder route — SPEC §11 puts it in M7.
+
+**Gate output.**
+```
+eslint → No issues found        tsc --noEmit → No errors found
+vite build → built in 1.10s
+grep -rn "100vh" src/          → only two comments explaining why it is never used
+grep -n disableVerticalSwipes  → wired in sdk.ts, called on init
+grep -rn "themeParams" src/    → only comments; the value is never read
+grep -rn "ArrowLeft|ChevronLeft" src/ → none: the native BackButton is the only one
+grep useEffect + fetch(        → none: all server state goes through TanStack Query
+backend pytest -q → 153 passed (unchanged)
+compose: /health ok · logs api | grep '"level": "ERROR"' → (none)
+```
