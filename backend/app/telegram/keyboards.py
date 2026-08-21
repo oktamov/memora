@@ -14,12 +14,14 @@ from app.core.config import settings
 
 OPEN_APP_LABEL = "Memorani ochish"
 REVIEW_LABEL = "Takrorlash"
+LANGS_LABEL = "Til"
+
+#: Reply-keyboard labels arrive as ordinary text; they are commands, not words.
+RESERVED_LABELS = {OPEN_APP_LABEL, REVIEW_LABEL, LANGS_LABEL}
 SAVE_LABEL = "Saqlash"
 
 # Callback data is bounded to 64 bytes by Telegram, so the payloads stay terse.
-TOGGLE_PREFIX = "m"
-SAVE_PREFIX = "s"
-CANCEL_PREFIX = "x"
+LANG_PREFIX = "l"
 
 
 def persistent_keyboard() -> ReplyKeyboardMarkup:
@@ -37,7 +39,7 @@ def persistent_keyboard() -> ReplyKeyboardMarkup:
     carry initData. See DECISIONS.md D26.
     """
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=REVIEW_LABEL)]],
+        keyboard=[[KeyboardButton(text=REVIEW_LABEL), KeyboardButton(text=LANGS_LABEL)]],
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="So'zni yozing…",
@@ -58,37 +60,6 @@ def open_app_button(
     )
 
 
-def lookup_keyboard(
-    token: str, meaning_count: int, selected: set[int], *, can_save: bool
-) -> InlineKeyboardMarkup:
-    """One toggle button per meaning, then Saqlash (SPEC §9a).
-
-    `token` identifies the pending lookup held in Redis; the message is edited in
-    place on every toggle, so the keyboard is rebuilt from the current selection.
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-
-    for index in range(meaning_count):
-        mark = "☑" if index in selected else "☐"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{mark} {index + 1}-ma'no",
-                    callback_data=f"{TOGGLE_PREFIX}:{token}:{index}",
-                )
-            ]
-        )
-
-    actions = [InlineKeyboardButton(text="Bekor qilish", callback_data=f"{CANCEL_PREFIX}:{token}")]
-    if can_save:
-        actions.insert(
-            0, InlineKeyboardButton(text=SAVE_LABEL, callback_data=f"{SAVE_PREFIX}:{token}")
-        )
-    rows.append(actions)
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def settings_keyboard(reminder_enabled: bool, reminder_hour: int | None) -> InlineKeyboardMarkup:
     """Reminder on/off and hour adjustment (SPEC §9a)."""
     toggle_label = "Eslatma: yoqilgan ✓" if reminder_enabled else "Eslatma: o'chirilgan"
@@ -106,3 +77,38 @@ def settings_keyboard(reminder_enabled: bool, reminder_hour: int | None) -> Inli
             ],
         ]
     )
+
+
+#: The pairs offered in the bot. Anything else is set from the Mini App, where a full
+#: picker fits; a chat keyboard has room for the common cases only.
+LANGUAGES = ("en", "ru", "uz", "tr", "de", "fr", "es", "ar")
+
+
+def language_keyboard(field: str, current: str) -> InlineKeyboardMarkup:
+    """Pick one side of the pair. `field` is `src` or `dst`."""
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+
+    for code in LANGUAGES:
+        mark = "· " if code == current else ""
+        row.append(
+            InlineKeyboardButton(
+                text=f"{mark}{code.upper()}", callback_data=f"{LANG_PREFIX}:{field}:{code}"
+            )
+        )
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    other = "dst" if field == "src" else "src"
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="Qaysi tilga →" if field == "src" else "← Qaysi tildan",
+                callback_data=f"{LANG_PREFIX}:switch:{other}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)

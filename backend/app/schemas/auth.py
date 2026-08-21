@@ -25,6 +25,7 @@ class UserResponse(ApiModel):
     telegram_id: int
     username: str | None
     first_name: str | None
+    source_lang: str
     native_lang: str
     ui_lang: str
     daily_new_limit: int
@@ -40,6 +41,7 @@ class UserResponse(ApiModel):
 class UserUpdateRequest(ApiModel):
     """PATCH /auth/me. Every field optional; unset fields are left alone."""
 
+    source_lang: str | None = Field(default=None, min_length=2, max_length=8)
     native_lang: str | None = Field(default=None, min_length=2, max_length=8)
     ui_lang: str | None = Field(default=None, min_length=2, max_length=8)
     daily_new_limit: int | None = Field(default=None, ge=0, le=1000)

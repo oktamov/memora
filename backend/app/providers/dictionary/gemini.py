@@ -1,7 +1,11 @@
-"""Gemini as a structured dictionary (SPEC §6).
+"""Gemini as a multi-sense translator.
 
-The only path that produces multi-meaning output for arbitrary source languages. It
-uses `responseSchema` structured output — the model is constrained to emit conforming
+The product is a translator, not a monolingual dictionary: a user types a word in one
+language and wants every translation of it in another, as one comma-separated line.
+One structured call answers that for any language pair, which is why this is the
+primary provider rather than a fallback.
+
+Structured output with a hard `responseSchema` — the model is constrained to conforming
 JSON, so nothing here ever parses free text.
 """
 
@@ -15,46 +19,45 @@ import httpx
 from app.core.config import settings
 from app.providers.base import LookupResult, Meaning, ProviderError
 
-# A hard schema. Anything the model returns that does not fit is a provider error,
-# never a salvage attempt.
 _RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "ipa": {"type": "string"},
-        "meanings": {
+        "translations": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
+                    "text": {"type": "string"},
                     "pos": {"type": "string"},
-                    "definition": {"type": "string"},
-                    "gloss_en": {"type": "string"},
-                    "examples": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["definition"],
+                "required": ["text"],
             },
         },
     },
-    "required": ["meanings"],
+    "required": ["translations"],
 }
 
-_PROMPT = """You are a bilingual dictionary.
+_PROMPT = """Translate a single word or short phrase.
 
-Word or short phrase: {term}
-Language of the word: {source_lang}
-Language to give the meanings in: {target_lang}
+Word: {term}
+From: {source_lang}
+To: {target_lang}
 
-Give every distinct meaning the word genuinely has, most common first, at most 6.
-For each meaning:
-- `pos`: part of speech in English (noun, verb, adjective, adverb, ...).
-- `definition`: the meaning written in {target_lang}. Short — a gloss, not an essay.
-- `gloss_en`: the same meaning in English.
-- `examples`: at most one natural sentence in {source_lang} using the word in that sense.
+Return every distinct translation the word genuinely has in {target_lang}, most common
+first, at most 6. Each entry is one translation only — a single word or short phrase,
+never a sentence, never an explanation, never a definition.
 
-Also give `ipa`: the IPA transcription of the word, or omit it if you are not sure.
+`pos` is the part of speech in English (noun, verb, adjective, ...), omitted when it
+does not apply.
 
-If the word does not exist in {source_lang}, return an empty `meanings` array.
-Never invent a meaning to fill space."""
+Also give `ipa`: the IPA transcription of the word in {source_lang}, omitted if you are
+not confident.
+
+If the word does not exist in {source_lang}, return an empty `translations` array.
+Never invent a translation to fill space."""
+
+_MAX_TRANSLATIONS = 6
 
 
 class GeminiDictionaryProvider:
@@ -66,7 +69,7 @@ class GeminiDictionaryProvider:
         self._model = model
 
     def supports(self, source_lang: str) -> bool:
-        """Any language. This is what makes it the non-English fallback."""
+        """Any language. This is what makes it the primary path for arbitrary pairs."""
         del source_lang
         return True
 
@@ -77,16 +80,16 @@ class GeminiDictionaryProvider:
         `DictionaryProvider` Protocol; `lookup_service` always passes it explicitly."""
         target = target_lang or "en"
         payload = await self._generate(term, source_lang, target)
-        meanings = self._parse_meanings(payload)
+        meanings = self._parse(payload)
         if not meanings:
             return None
 
-        ipa = payload.get("ipa")
+        ipa = str(payload.get("ipa") or "").strip()
         return LookupResult(
             term=term,
             source_lang=source_lang,
             target_lang=target,
-            ipa=str(ipa).strip() or None if ipa else None,
+            ipa=ipa or None,
             meanings=meanings,
             provider=self.name,
         )
@@ -137,30 +140,28 @@ class GeminiDictionaryProvider:
             raise ProviderError(self.name, "structured output was not an object")
         return parsed
 
-    def _parse_meanings(self, payload: dict[str, Any]) -> list[Meaning]:
-        raw = payload.get("meanings")
+    def _parse(self, payload: dict[str, Any]) -> list[Meaning]:
+        raw = payload.get("translations")
         if not isinstance(raw, list):
-            raise ProviderError(self.name, "structured output had no meanings array")
+            raise ProviderError(self.name, "structured output had no translations array")
 
+        seen: set[str] = set()
         meanings: list[Meaning] = []
-        for item in raw[:6]:
+        for item in raw[:_MAX_TRANSLATIONS]:
             if not isinstance(item, dict):
                 continue
-            definition = str(item.get("definition", "")).strip()
-            if not definition:
+            text = str(item.get("text", "")).strip()
+            # A model asked for "every distinct translation" will still repeat itself
+            # occasionally, and a duplicate in a comma-separated line looks like a bug.
+            key = text.casefold()
+            if not text or key in seen:
                 continue
-            gloss = str(item.get("gloss_en", "")).strip()
-            examples = [
-                str(example).strip()
-                for example in (item.get("examples") or [])
-                if str(example).strip()
-            ]
+            seen.add(key)
             meanings.append(
                 Meaning(
                     pos=str(item.get("pos", "")).strip() or None,
-                    definition=definition,
-                    gloss_en=gloss or None,
-                    examples=examples[:2],
+                    definition=text,
+                    gloss_en=None,
                 )
             )
         return meanings

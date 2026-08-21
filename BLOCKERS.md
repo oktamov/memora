@@ -30,7 +30,10 @@ the ASGI app directly.
 
 ## B3 — Azure Translator key (`AZURE_TRANSLATOR_KEY`, `AZURE_TRANSLATOR_REGION`)
 
-**Needed:** an Azure Translator resource; copy key and region into `.env`.
+**Needed:** an Azure Translator resource; copy key and region into `.env`. Optional —
+Gemini alone covers every language pair. Azure's Dictionary Lookup is faster and cheaper
+for the pairs it supports (all involving English), so it runs ahead of Gemini when
+configured.
 
 **Meanwhile:** `providers/translation/azure.py` is complete and correct against the
 Azure Translator v3.0 `/translate` contract. When the key is absent,

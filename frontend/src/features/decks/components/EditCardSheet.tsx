@@ -58,18 +58,9 @@ export function EditCardSheet({
   return (
     <Sheet open title={card.display_term} onClose={onClose}>
       <div className="space-y-4">
-        <ul className="space-y-1.5">
-          {card.meanings.map((meaning, index) => (
-            <li key={`${meaning.definition}-${index}`} className="text-[0.95rem] text-body">
-              {meaning.pos ? (
-                <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-widest text-faint">
-                  {meaning.pos}
-                </span>
-              ) : null}
-              {meaning.definition}
-            </li>
-          ))}
-        </ul>
+        <p className="text-[1.05rem] leading-snug text-body">
+          {card.meanings.map((meaning) => meaning.definition).join(', ')}
+        </p>
 
         <TextArea
           label="Eslatma"

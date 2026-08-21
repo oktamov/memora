@@ -21,7 +21,7 @@ export function CardRow({ card, onEdit }: { card: Card; onEdit: () => void }) {
           {card.ipa ? <span className="font-mono text-xs text-faint">{card.ipa}</span> : null}
         </div>
         <p className="mt-0.5 truncate text-sm text-muted">
-          {card.meanings.map((meaning) => meaning.definition).join(' · ')}
+          {card.meanings.map((meaning) => meaning.definition).join(', ')}
         </p>
       </div>
 

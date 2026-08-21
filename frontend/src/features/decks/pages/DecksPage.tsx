@@ -31,7 +31,7 @@ export function DecksPage() {
         decks.data.length === 0 ? (
           <EmptyState
             title="Hali to‘plam yo‘q"
-            hint="Kitob o‘qiyotganda uchragan so‘zni tepadagi maydonga yozing — u bugungi to‘plamga tushadi."
+            hint="Tepadagi maydonga so‘z yozing — tarjimasi chiqadi va u bugungi lug‘atingizga o‘zi tushadi."
             action={
               <Button variant="ghost" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="h-4 w-4" />

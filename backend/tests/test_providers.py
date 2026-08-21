@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.providers.base import LookupResult, ProviderError
+from app.providers.dictionary.azure_dictionary import AzureDictionaryProvider
 from app.providers.dictionary.free_dictionary import FreeDictionaryProvider
 from app.providers.dictionary.gemini import GeminiDictionaryProvider
 from app.providers.registry import ProviderRegistry
@@ -121,7 +122,7 @@ def _gemini_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     return {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]}
 
 
-async def test_gemini_dictionary_uses_a_hard_response_schema() -> None:
+async def test_gemini_returns_every_translation_via_a_hard_response_schema() -> None:
     captured: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -130,14 +131,11 @@ async def test_gemini_dictionary_uses_a_hard_response_schema() -> None:
             200,
             json=_gemini_envelope(
                 {
-                    "ipa": "/kitɒb/",
-                    "meanings": [
-                        {
-                            "pos": "noun",
-                            "definition": "книга",
-                            "gloss_en": "a book",
-                            "examples": ["Men kitob o'qidim."],
-                        }
+                    "ipa": "/rʌn/",
+                    "translations": [
+                        {"text": "yugurmoq", "pos": "verb"},
+                        {"text": "chopmoq", "pos": "verb"},
+                        {"text": "boshqarmoq", "pos": "verb"},
                     ],
                 }
             ),
@@ -145,19 +143,48 @@ async def test_gemini_dictionary_uses_a_hard_response_schema() -> None:
 
     async with mock_client(httpx.MockTransport(handler)) as client:
         provider = GeminiDictionaryProvider(client, api_key="k", model="gemini-2.0-flash")
-        result = await provider.lookup("kitob", "uz", "ru")
+        result = await provider.lookup("run", "en", "uz")
 
     assert captured["generationConfig"]["responseMimeType"] == "application/json"
     assert "responseSchema" in captured["generationConfig"]
     assert result is not None
-    assert result.target_lang == "ru"
-    assert result.meanings[0].definition == "книга"
-    assert result.meanings[0].gloss_en == "a book"
+    assert result.target_lang == "uz"
+    assert [meaning.definition for meaning in result.meanings] == [
+        "yugurmoq",
+        "chopmoq",
+        "boshqarmoq",
+    ]
+    assert result.ipa == "/rʌn/"
 
 
-async def test_gemini_dictionary_returns_none_for_a_word_that_does_not_exist() -> None:
+async def test_gemini_drops_repeated_translations() -> None:
+    """A duplicate in a comma-separated line reads as a bug."""
+
     async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_gemini_envelope({"meanings": []}))
+        return httpx.Response(
+            200,
+            json=_gemini_envelope(
+                {
+                    "translations": [
+                        {"text": "suv"},
+                        {"text": "Suv"},
+                        {"text": "sug'ormoq"},
+                    ]
+                }
+            ),
+        )
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = GeminiDictionaryProvider(client, api_key="k", model="m")
+        result = await provider.lookup("water", "en", "uz")
+
+    assert result is not None
+    assert [meaning.definition for meaning in result.meanings] == ["suv", "sug'ormoq"]
+
+
+async def test_gemini_returns_none_for_a_word_that_does_not_exist() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_gemini_envelope({"translations": []}))
 
     async with mock_client(httpx.MockTransport(handler)) as client:
         provider = GeminiDictionaryProvider(client, api_key="k", model="m")
@@ -194,31 +221,86 @@ async def test_registry_falls_back_to_fakes_without_credentials() -> None:
     assert registry.uses_fakes is True
 
 
-async def test_registry_prefers_the_llm_for_uzbek_when_configured(monkeypatch: Any) -> None:
-    """SPEC §6: `UZ_PREFER_LLM` puts Gemini first even for English source words."""
+async def test_the_chain_falls_back_to_gemini_for_any_pair() -> None:
+    """Without Azure configured, one provider covers every language pair."""
+    async with mock_client(httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        registry = ProviderRegistry(client)
+        chain = registry.chain_for("ru", "uz")
+
+    assert chain.providers == (registry.gemini,)
+
+
+async def test_azure_goes_first_when_it_covers_the_pair(monkeypatch: Any) -> None:
+    """One dictionary call beats a model call on latency and on cost."""
     from app.core.config import settings
 
+    monkeypatch.setattr(settings, "AZURE_TRANSLATOR_KEY", "key")
+    monkeypatch.setattr(settings, "AZURE_TRANSLATOR_REGION", "westeurope")
+    monkeypatch.setattr(settings, "UZ_PREFER_LLM", False)
+
     async with mock_client(httpx.MockTransport(lambda _: httpx.Response(200))) as client:
         registry = ProviderRegistry(client)
 
-        monkeypatch.setattr(settings, "UZ_PREFER_LLM", True)
-        uz_chain = registry.chain_for("en", "uz")
-        assert uz_chain.dictionaries[0][0] is registry.gemini_dictionary
-        assert uz_chain.dictionaries[1][0] is registry.free_dictionary
+        covered = registry.chain_for("en", "ru")
+        assert covered.providers[0] is registry.azure
+        assert covered.providers[1] is registry.gemini
 
-        monkeypatch.setattr(settings, "UZ_PREFER_LLM", False)
-        ru_chain = registry.chain_for("en", "ru")
-        assert ru_chain.dictionaries[0][0] is registry.free_dictionary
+        # Azure's dictionary only goes to or from English.
+        uncovered = registry.chain_for("ru", "tr")
+        assert uncovered.providers == (registry.gemini,)
 
 
-async def test_registry_uses_gemini_only_for_a_non_english_source() -> None:
+async def test_uz_prefer_llm_keeps_azure_out_of_the_way(monkeypatch: Any) -> None:
+    """SPEC §6: general NMT handles Uzbek unevenly, so the model leads for `uz`."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AZURE_TRANSLATOR_KEY", "key")
+    monkeypatch.setattr(settings, "AZURE_TRANSLATOR_REGION", "westeurope")
+    monkeypatch.setattr(settings, "UZ_PREFER_LLM", True)
+
     async with mock_client(httpx.MockTransport(lambda _: httpx.Response(200))) as client:
         registry = ProviderRegistry(client)
-        chain = registry.chain_for("uz", "en")
+        chain = registry.chain_for("en", "uz")
 
-    assert len(chain.dictionaries) == 1
-    assert chain.dictionaries[0][0] is registry.gemini_dictionary
-    assert chain.dictionaries[0][1] is True  # bilingual: no translation step needed
+    assert chain.providers == (registry.gemini,)
+
+
+async def test_azure_dictionary_parses_alternative_translations() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/dictionary/lookup")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "normalizedSource": "run",
+                    "displaySource": "run",
+                    "translations": [
+                        {"displayTarget": "бежать", "posTag": "VERB"},
+                        {"displayTarget": "запускать", "posTag": "VERB"},
+                        {"displayTarget": "бежать", "posTag": "VERB"},
+                    ],
+                }
+            ],
+        )
+
+    async with mock_client(httpx.MockTransport(handler)) as client:
+        provider = AzureDictionaryProvider(client, key="k", region="r")
+        result = await provider.lookup("run", "en", "ru")
+
+    assert result is not None
+    # Duplicates collapsed, order preserved.
+    assert [meaning.definition for meaning in result.meanings] == ["бежать", "запускать"]
+    assert result.meanings[0].pos == "verb"
+
+
+async def test_azure_dictionary_declines_a_pair_it_cannot_serve() -> None:
+    async with mock_client(httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        provider = AzureDictionaryProvider(client, key="k", region="r")
+
+        assert provider.supports_pair("en", "ru") is True
+        assert provider.supports_pair("ru", "tr") is False
+        assert provider.supports_pair("en", "uz") is False  # uz is not in the dictionary
+        assert await provider.lookup("kitob", "uz", "tr") is None
 
 
 def test_lookup_result_round_trips_through_json() -> None:

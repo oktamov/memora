@@ -13,6 +13,7 @@ export type User = {
   telegram_id: number;
   username: string | null;
   first_name: string | null;
+  source_lang: string;
   native_lang: string;
   ui_lang: string;
   daily_new_limit: number;
@@ -53,11 +54,22 @@ export type LookupResult = {
   source_lang: string;
   target_lang: string;
   ipa: string | null;
+  /** Every translation as one comma-separated line — what the user actually reads. */
+  translation: string;
+  /** The same translations, structured. Kept for the developer API. */
   meanings: Meaning[];
   provider: string;
   cache: 'miss' | 'redis' | 'db';
   quota_used: number;
   quota_limit: number;
+};
+
+/** A translation that has already been filed into today's deck. */
+export type TranslateResult = LookupResult & {
+  card_id: string;
+  deck_id: string;
+  deck_name: string;
+  already_saved: boolean;
 };
 
 export type CardMeaning = {

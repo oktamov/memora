@@ -53,8 +53,10 @@ def local_today(user: User, *, now: datetime | None = None) -> date:
     return moment.astimezone(user_timezone(user)).date()
 
 
-def daily_deck_name(day: date) -> str:
-    return f"{day.day}-{_UZ_MONTHS[day.month - 1]}"
+def daily_deck_name(day: date, source_lang: str, target_lang: str) -> str:
+    """Reads like a diary entry, and names the pair so two same-day decks are telling
+    apart at a glance."""
+    return f"{day.day}-{_UZ_MONTHS[day.month - 1]} · {source_lang.upper()} → {target_lang.upper()}"
 
 
 def _visible(user_id: UUID) -> Select[tuple[Deck]]:
@@ -132,9 +134,14 @@ async def delete_deck(session: AsyncSession, user: User, deck_id: UUID) -> None:
 
 
 async def get_or_create_daily_deck(
-    session: AsyncSession, user: User, *, now: datetime | None = None
+    session: AsyncSession,
+    user: User,
+    *,
+    source_lang: str | None = None,
+    target_lang: str | None = None,
+    now: datetime | None = None,
 ) -> Deck:
-    """Today's daily deck, created if this is the first save of the day.
+    """Today's daily deck for a language pair, created on the day's first save.
 
     Two concurrent first-saves (the Mini App and the bot, say) would both find nothing
     and both insert. The partial unique index makes one of them lose; `ON CONFLICT DO
@@ -142,10 +149,18 @@ async def get_or_create_daily_deck(
     a 500.
     """
     today = local_today(user, now=now)
+    source = source_lang or user.source_lang
+    target = target_lang or user.native_lang
 
-    existing = await session.scalar(
-        _visible(user.id).where(Deck.kind == DeckKind.daily, Deck.daily_date == today)
-    )
+    def _find() -> Select[tuple[Deck]]:
+        return _visible(user.id).where(
+            Deck.kind == DeckKind.daily,
+            Deck.daily_date == today,
+            Deck.source_lang == source,
+            Deck.target_lang == target,
+        )
+
+    existing = await session.scalar(_find())
     if existing is not None:
         return existing
 
@@ -154,14 +169,15 @@ async def get_or_create_daily_deck(
         .values(
             id=uuid7(),
             user_id=user.id,
-            name=daily_deck_name(today),
-            source_lang="en",
-            target_lang=user.native_lang,
+            name=daily_deck_name(today, source, target),
+            source_lang=source,
+            target_lang=target,
             kind=DeckKind.daily,
             daily_date=today,
         )
         .on_conflict_do_nothing(
-            index_elements=["user_id", "daily_date"], index_where=DAILY_DECK_PREDICATE
+            index_elements=["user_id", "daily_date", "source_lang", "target_lang"],
+            index_where=DAILY_DECK_PREDICATE,
         )
         .returning(Deck)
     )
@@ -178,9 +194,7 @@ async def get_or_create_daily_deck(
         return created
 
     # We lost the race; the winner's row is the answer.
-    deck = await session.scalar(
-        _visible(user.id).where(Deck.kind == DeckKind.daily, Deck.daily_date == today)
-    )
+    deck = await session.scalar(_find())
     if deck is None:  # pragma: no cover — only reachable if the row vanished mid-flight
         raise ConflictError("Kunlik to'plam yaratilmadi.", code="daily_deck_unavailable")
     return deck

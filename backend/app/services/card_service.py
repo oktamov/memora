@@ -276,3 +276,14 @@ async def states_for(session: AsyncSession, card_ids: list[UUID]) -> dict[UUID, 
         return {}
     rows = await session.scalars(select(CardState).where(CardState.card_id.in_(card_ids)))
     return {state.card_id: state for state in rows}
+
+
+async def find_in_deck(
+    session: AsyncSession, user: User, *, deck_id: UUID, term: str
+) -> Card | None:
+    """The existing card for a term in a deck, if any. Used to make a repeat
+    translation idempotent rather than an error."""
+    card: Card | None = await session.scalar(
+        _owned(user.id).where(Card.deck_id == deck_id, Card.term == normalize_term(term))
+    )
+    return card

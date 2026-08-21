@@ -2,35 +2,34 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/shared/api/endpoints';
 import { queryKeys } from '@/shared/api/queryKeys';
-import type { CardExample, CardMeaning } from '@/shared/api/types';
 
 /**
- * Lookup is a mutation, not a query, on purpose.
+ * Translate and keep, in one call.
  *
- * SPEC §10, §13: no search-as-you-type. Every keystroke fired at a paid API is money
- * burned, so the call only ever happens on explicit submit.
+ * A mutation rather than a query on purpose: SPEC §10 and §13 forbid
+ * search-as-you-type, so this only ever runs on explicit submit. Every keystroke sent
+ * to a paid API is money burned.
  */
-export function useLookup() {
-  return useMutation({ mutationFn: api.lookup });
+export function useTranslate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: api.translate,
+    onSuccess: (result) => {
+      // The word is already filed, so the deck list and review counts are stale.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
+      void queryClient.invalidateQueries({ queryKey: ['cards', result.deck_id] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reviewCounts });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.stats });
+    },
+  });
 }
 
-export function useSaveCard() {
+export function useUpdateLanguages() {
   const queryClient = useQueryClient();
+
   return useMutation({
-    mutationFn: (body: {
-      deck_id?: string | null;
-      term: string;
-      ipa?: string | null;
-      pos?: string | null;
-      meanings: CardMeaning[];
-      examples: CardExample[];
-      note?: string | null;
-    }) => api.createCard(body),
-    onSuccess: (card) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.decks });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dailyDeck });
-      void queryClient.invalidateQueries({ queryKey: ['cards', card.deck_id] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.reviewCounts });
-    },
+    mutationFn: (pair: { source_lang: string; native_lang: string }) => api.updateMe(pair),
+    onSuccess: (user) => queryClient.setQueryData(queryKeys.me, user),
   });
 }

@@ -7,6 +7,7 @@ import type {
   CardMeaning,
   Deck,
   LookupResult,
+  TranslateResult,
   Page,
   Rating,
   ReviewCountsOverview,
@@ -18,8 +19,8 @@ import type {
 export const api = {
   me: () => request<User>('/auth/me'),
 
-  updateMe: (patch: Partial<Pick<User, 'native_lang' | 'daily_new_limit' | 'daily_review_limit'
-    | 'timezone' | 'reminder_hour' | 'reminder_enabled'>>) =>
+  updateMe: (patch: Partial<Pick<User, 'source_lang' | 'native_lang' | 'daily_new_limit'
+    | 'daily_review_limit' | 'timezone' | 'reminder_hour' | 'reminder_enabled'>>) =>
     request<User>('/auth/me', { method: 'PATCH', body: patch }),
 
   decks: () => request<Deck[]>('/decks'),
@@ -36,7 +37,12 @@ export const api = {
 
   deleteDeck: (deckId: string) => request<void>(`/decks/${deckId}`, { method: 'DELETE' }),
 
-  lookup: (body: { term: string; source_lang: string; target_lang: string }) =>
+  /** Translate and file the word in one call — the app's main action. */
+  translate: (body: { term: string; source_lang?: string; target_lang?: string }) =>
+    request<TranslateResult>('/translate', { method: 'POST', body }),
+
+  /** Translate without saving. The shape a public developer API takes. */
+  lookup: (body: { term: string; source_lang?: string; target_lang?: string }) =>
     request<LookupResult>('/lookup', { method: 'POST', body }),
 
   createCard: (body: {

@@ -216,25 +216,35 @@ async def test_the_global_budget_serves_cache_only_once_exceeded(
     assert fresh.json()["error"]["code"] == "provider_budget_exceeded"
 
 
+class _AlwaysFails:
+    name = "always_fails"
+
+    def supports(self, source_lang: str) -> bool:
+        del source_lang
+        return True
+
+    async def lookup(self, *args: Any, **kwargs: Any) -> None:
+        from app.providers.base import ProviderError
+
+        raise ProviderError(self.name, "boom")
+
+
+class _NeverFinds:
+    name = "never_finds"
+
+    def supports(self, source_lang: str) -> bool:
+        del source_lang
+        return True
+
+    async def lookup(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 async def test_a_whole_chain_failure_returns_a_retryable_503(
     client: AsyncClient, auth_headers: dict[str, str], app: FastAPI
 ) -> None:
     """SPEC §6: never a partial or invented result."""
-    from app.providers.base import ProviderError
-
-    class AlwaysFails:
-        name = "always_fails"
-
-        def supports(self, source_lang: str) -> bool:
-            del source_lang
-            return True
-
-        async def lookup(self, *args: Any, **kwargs: Any) -> None:
-            raise ProviderError(self.name, "boom")
-
-    registry = app.state.provider_registry
-    registry.gemini_dictionary = AlwaysFails()
-    registry.free_dictionary = AlwaysFails()
+    app.state.provider_registry.gemini = _AlwaysFails()
 
     response = await client.post(
         "/api/v1/lookup",
@@ -249,73 +259,35 @@ async def test_a_whole_chain_failure_returns_a_retryable_503(
 
 
 async def test_the_chain_falls_through_to_the_next_provider(
-    client: AsyncClient, auth_headers: dict[str, str], app: FastAPI
+    client: AsyncClient, auth_headers: dict[str, str], app: FastAPI, monkeypatch: Any
 ) -> None:
-    from app.providers.base import ProviderError
+    from app.core.config import settings
+    from app.providers.dictionary.azure_dictionary import AzureDictionaryProvider
 
-    class AlwaysFails:
-        name = "always_fails"
-
-        def supports(self, source_lang: str) -> bool:
-            del source_lang
-            return True
-
-        async def lookup(self, *args: Any, **kwargs: Any) -> None:
-            raise ProviderError(self.name, "boom")
-
-    registry = app.state.provider_registry
-    # Gemini is first for uz; make it fail and check FreeDictionary's stand-in answers.
-    registry.gemini_dictionary = AlwaysFails()
+    monkeypatch.setattr(settings, "UZ_PREFER_LLM", False)
 
     async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json=[
-                {
-                    "word": "fallthrough",
-                    "phonetic": "/f/",
-                    "meanings": [
-                        {
-                            "partOfSpeech": "noun",
-                            "definitions": [{"definition": "a fallback definition"}],
-                        }
-                    ],
-                }
-            ],
-        )
+        return httpx.Response(500, text="azure is down")
 
-    from app.providers.dictionary.free_dictionary import FreeDictionaryProvider
-
+    registry = app.state.provider_registry
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as mocked:
-        registry.free_dictionary = FreeDictionaryProvider(mocked)
+        # Azure leads for en→ru and fails; the fake behind it still answers.
+        registry.azure = AzureDictionaryProvider(mocked, key="k", region="r")
+
         response = await client.post(
             "/api/v1/lookup",
             headers=auth_headers,
-            json={"term": "fallthrough", "source_lang": "en", "target_lang": "uz"},
+            json={"term": "run", "source_lang": "en", "target_lang": "ru"},
         )
 
     assert response.status_code == 200, response.text
-    assert response.json()["provider"] == "free_dictionary"
-    # It went through the translation step, so the text is no longer the English gloss.
-    assert response.json()["meanings"][0]["gloss_en"] == "a fallback definition"
+    assert response.json()["provider"] == "fake_dictionary"
 
 
 async def test_an_unknown_word_is_a_404_not_a_503(
     client: AsyncClient, auth_headers: dict[str, str], app: FastAPI
 ) -> None:
-    class NeverFinds:
-        name = "never_finds"
-
-        def supports(self, source_lang: str) -> bool:
-            del source_lang
-            return True
-
-        async def lookup(self, *args: Any, **kwargs: Any) -> None:
-            return None
-
-    registry = app.state.provider_registry
-    registry.gemini_dictionary = NeverFinds()
-    registry.free_dictionary = NeverFinds()
+    app.state.provider_registry.gemini = _NeverFinds()
 
     response = await client.post(
         "/api/v1/lookup",
@@ -325,6 +297,18 @@ async def test_an_unknown_word_is_a_404_not_a_503(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "term_not_found"
+
+
+async def test_lookup_joins_every_translation_into_one_line(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """The product's actual output: one line, nothing to select."""
+    response = await client.post("/api/v1/lookup", headers=auth_headers, json=RUN)
+
+    body = response.json()
+    assert body["translation"] == "yugurmoq, chopmoq, boshqarmoq, yugurish"
+    # ...and the structured form survives for the developer API.
+    assert len(body["meanings"]) == 4
 
 
 def test_normalize_collapses_case_and_whitespace() -> None:
@@ -346,3 +330,82 @@ async def test_case_and_spacing_variants_share_one_cache_entry(
     rows = (await db_session.scalars(select(LookupCache).where(LookupCache.term == "run"))).all()
 
     assert len(rows) == 1
+
+
+# --- Translate: the product loop -------------------------------------------------
+
+
+async def test_translate_saves_the_word_without_the_user_doing_anything(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    response = await client.post("/api/v1/translate", headers=auth_headers, json=RUN)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["translation"] == "yugurmoq, chopmoq, boshqarmoq, yugurish"
+    assert body["already_saved"] is False
+    assert "EN → UZ" in body["deck_name"]
+
+    # ...and it is genuinely in the deck, with no second call.
+    cards = await client.get(f"/api/v1/decks/{body['deck_id']}/cards", headers=auth_headers)
+    assert [item["term"] for item in cards.json()["items"]] == ["run"]
+
+
+async def test_translating_the_same_word_twice_is_not_an_error(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """Asking the same question twice deserves the same answer.
+
+    This runs through the HTTP layer on purpose: the service-level path recovers from a
+    failed insert differently than a real request does, and the first version of this
+    endpoint returned 500 here while every service test passed.
+    """
+    first = await client.post("/api/v1/translate", headers=auth_headers, json=RUN)
+    second = await client.post("/api/v1/translate", headers=auth_headers, json=RUN)
+
+    assert first.status_code == 200
+    assert second.status_code == 200, second.text
+    assert second.json()["already_saved"] is True
+    assert second.json()["card_id"] == first.json()["card_id"]
+    assert second.json()["translation"] == first.json()["translation"]
+
+
+async def test_translate_files_each_language_pair_in_its_own_deck(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    await client.post("/api/v1/translate", headers=auth_headers, json=RUN)
+    await client.post(
+        "/api/v1/translate",
+        headers=auth_headers,
+        json={"term": "voda", "source_lang": "ru", "target_lang": "uz"},
+    )
+
+    decks = await client.get("/api/v1/decks", headers=auth_headers)
+    pairs = {(deck["source_lang"], deck["target_lang"]) for deck in decks.json()}
+
+    assert pairs == {("en", "uz"), ("ru", "uz")}
+
+
+async def test_translate_falls_back_to_the_users_remembered_pair(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """The app sends the pair explicitly; the bot and a bare API call need not."""
+    await client.patch(
+        "/api/v1/auth/me", headers=auth_headers, json={"source_lang": "de", "native_lang": "ru"}
+    )
+
+    response = await client.post("/api/v1/translate", headers=auth_headers, json={"term": "haus"})
+
+    assert response.json()["source_lang"] == "de"
+    assert response.json()["target_lang"] == "ru"
+
+
+async def test_lookup_does_not_save_anything(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """`/lookup` stays a pure read, which is what a public developer API must be."""
+    await client.post("/api/v1/lookup", headers=auth_headers, json=RUN)
+
+    decks = await client.get("/api/v1/decks", headers=auth_headers)
+
+    assert decks.json() == []

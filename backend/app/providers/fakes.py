@@ -9,33 +9,19 @@ from __future__ import annotations
 
 from app.providers.base import LookupResult, Meaning
 
-# Deterministic fixture data. `run` is the word SPEC §11 M2 accepts against.
-_FIXTURES: dict[str, tuple[str | None, list[tuple[str | None, str, str]]]] = {
+# Deterministic fixture data: a word mapped to its translations, exactly the shape a
+# real provider returns.
+_FIXTURES: dict[str, tuple[str | None, list[tuple[str | None, str]]]] = {
     "run": (
         "/rʌn/",
-        [
-            ("verb", "yugurmoq", "to move at a speed faster than walking"),
-            ("verb", "boshqarmoq", "to manage or operate something"),
-            ("noun", "yugurish", "an act of running"),
-            ("noun", "muddat", "a continuous period of something"),
-        ],
+        [("verb", "yugurmoq"), ("verb", "chopmoq"), ("verb", "boshqarmoq"), ("noun", "yugurish")],
     ),
+    "book": ("/bʊk/", [("noun", "kitob"), ("verb", "band qilmoq"), ("noun", "daftar")]),
     "serendipity": (
         "/ˌsɛrənˈdɪpɪti/",
-        [
-            ("noun", "tasodifiy omad", "the occurrence of happy events by chance"),
-            ("noun", "kutilmagan topilma", "an unplanned fortunate discovery"),
-            ("noun", "xushtasodif", "the faculty of making desirable discoveries by accident"),
-        ],
+        [(None, "tasodifiy omad"), (None, "kutilmagan topilma")],
     ),
-    "book": (
-        "/bʊk/",
-        [
-            ("noun", "kitob", "a written or printed work consisting of pages"),
-            ("verb", "band qilmoq", "to reserve something in advance"),
-            ("noun", "daftar", "a set of blank sheets bound together"),
-        ],
-    ),
+    "water": ("/ˈwɔːtər/", [("noun", "suv"), ("verb", "sug'ormoq")]),
 }
 
 _GENERIC_IPA = "/ˈfɪkstʃə/"
@@ -58,20 +44,12 @@ class FakeDictionaryProvider:
 
         if key in _FIXTURES:
             ipa, rows = _FIXTURES[key]
-            meanings = [
-                Meaning(pos=pos, definition=definition, gloss_en=gloss)
-                for pos, definition, gloss in rows
-            ]
+            meanings = [Meaning(pos=pos, definition=text, gloss_en=None) for pos, text in rows]
         else:
             ipa = _GENERIC_IPA
             meanings = [
-                Meaning(
-                    pos="noun",
-                    definition=f"{term} (namunaviy ma'no {index})",
-                    gloss_en=f"fixture meaning {index} of {term}",
-                    examples=[f"This is a fixture sentence with {term}."],
-                )
-                for index in (1, 2, 3)
+                Meaning(pos=None, definition=f"{term} ({target} tarjimasi {index})", gloss_en=None)
+                for index in (1, 2)
             ]
 
         return LookupResult(

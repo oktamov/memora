@@ -30,8 +30,8 @@ from app.core.errors import NotFoundError, ProviderUnavailableError, ValidationE
 from app.core.logging import get_logger, log_provider_call
 from app.models.lookup import LookupCache
 from app.models.user import User
-from app.providers.base import LookupResult, Meaning, ProviderError
-from app.providers.registry import Chain, ProviderRegistry
+from app.providers.base import LookupResult
+from app.providers.registry import ProviderRegistry
 from app.services import quota_service
 
 logger = get_logger(__name__)
@@ -49,6 +49,15 @@ class LookupOutcome:
     cache: str
     quota_used: int
     quota_limit: int
+
+
+def joined_translation(result: LookupResult) -> str:
+    """Every translation as one comma-separated line.
+
+    This is the product's actual output: the user types a word and reads one line, with
+    nothing to select and nothing to tap.
+    """
+    return ", ".join(meaning.definition for meaning in result.meanings)
 
 
 def normalize_term(term: str) -> str:
@@ -234,15 +243,10 @@ async def _from_providers(
     failures: list[str] = []
     answered_not_found = False
 
-    for provider, is_bilingual in chain.dictionaries:
+    for provider in chain.providers:
         started = time.perf_counter()
         try:
-            if is_bilingual:
-                # Bilingual providers take target_lang too; the Protocol's two-argument
-                # form stays the default so both kinds share one call site.
-                raw = await provider.lookup(term, source_lang, target_lang)  # type: ignore[call-arg]
-            else:
-                raw = await provider.lookup(term, source_lang)
+            raw = await provider.lookup(term, source_lang, target_lang)  # type: ignore[call-arg]
         except Exception as exc:
             # ProviderError is the expected shape, but a provider bug of any kind must
             # not take the chain down — the next provider still gets its turn.
@@ -267,12 +271,6 @@ async def _from_providers(
             _log(term, source_lang, target_lang, provider.name, latency_ms, CACHE_MISS, True, True)
             continue
 
-        if not is_bilingual and target_lang != "en":
-            translated = await _translate(chain, raw, target_lang, failures)
-            if translated is None:
-                continue
-            raw = translated
-
         raw.target_lang = target_lang
         _log(term, source_lang, target_lang, provider.name, latency_ms, CACHE_MISS, True, True)
         return raw
@@ -290,80 +288,9 @@ async def _from_providers(
         },
     )
     raise ProviderUnavailableError(
-        "Lug'at hozir javob bermayapti. Birozdan so'ng urinib ko'ring.",
+        "Tarjimon hozir javob bermayapti. Birozdan so'ng urinib ko'ring.",
         details={"retryable": True},
     )
-
-
-async def _translate(
-    chain: Chain, result: LookupResult, target_lang: str, failures: list[str]
-) -> LookupResult | None:
-    """Turn an English-only result into `target_lang` in **one** batched call (SPEC §6).
-
-    Definitions and examples go over together; the English text stays in `gloss_en`.
-    """
-    translator = chain.translator
-    if translator is None:
-        failures.append("no translator configured")
-        return None
-
-    texts: list[str] = []
-    for meaning in result.meanings:
-        texts.append(meaning.definition)
-        texts.extend(meaning.examples)
-
-    started = time.perf_counter()
-    try:
-        translated = await translator.translate(texts, result.source_lang, target_lang)
-    except ProviderError as exc:
-        failures.append(f"{translator.name}: {exc}")
-        _log(
-            result.term,
-            result.source_lang,
-            target_lang,
-            translator.name,
-            (time.perf_counter() - started) * 1000,
-            CACHE_MISS,
-            True,
-            False,
-            error=str(exc),
-        )
-        return None
-
-    if len(translated) != len(texts):
-        failures.append(f"{translator.name}: batch length mismatch")
-        return None
-
-    _log(
-        result.term,
-        result.source_lang,
-        target_lang,
-        translator.name,
-        (time.perf_counter() - started) * 1000,
-        CACHE_MISS,
-        True,
-        True,
-    )
-
-    cursor = 0
-    rebuilt: list[Meaning] = []
-    for meaning in result.meanings:
-        definition = translated[cursor]
-        cursor += 1
-        example_count = len(meaning.examples)
-        examples = translated[cursor : cursor + example_count]
-        cursor += example_count
-        rebuilt.append(
-            Meaning(
-                pos=meaning.pos,
-                definition=definition,
-                gloss_en=meaning.gloss_en or meaning.definition,
-                examples=list(examples),
-            )
-        )
-
-    result.meanings = rebuilt
-    return result
 
 
 def _log(

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from app.providers.base import LookupResult
-
 GREETING = (
-    "Salom! Men Memora — kitob o'qiyotganda uchragan so'zlarni saqlab, "
-    "keyin yodlashga yordam beraman.\n\n"
-    "Notanish so'zni shu yerga yozing — barcha ma'nolarini olasiz va "
-    "kerakligini bugungi to'plamga saqlaysiz."
+    "Salom! Men Memora — so'zlarni tarjima qilib, o'zim saqlab boraman.\n\n"
+    "Notanish so'zni shu yerga yozing. Tarjimalarini olasiz va so'z bugungi "
+    "lug'atingizga o'zi tushadi — boshqa hech narsa qilishingiz shart emas.\n\n"
+    "Tilni almashtirish uchun <b>Til</b> tugmasini bosing."
 )
 
 OPEN_PROMPT = "Boshlash uchun ilovani oching:"
@@ -17,12 +15,10 @@ TERM_TOO_LONG = "So'z juda uzun. Bu ilova so'z va qisqa iboralar uchun — ko'pi
 TERM_TOO_MANY_TOKENS = "Bu ilova so'z va qisqa iboralar uchun — ko'pi bilan 4 ta so'z."
 TERM_EMPTY = "So'z kiritilmadi."
 TERM_NOT_FOUND = "Bu so'z topilmadi. Imlosini tekshirib ko'ring."
+LANGUAGES_SAVED = "Til o'zgartirildi."
 QUOTA_EXCEEDED = "Bugungi lug'at limiti tugadi. Ertaga yana urinib ko'ring."
 RATE_LIMITED = "Biroz sekinroq. Bir daqiqadan keyin urinib ko'ring."
 PROVIDER_DOWN = "Lug'at hozir javob bermayapti. Birozdan so'ng urinib ko'ring."
-NOTHING_SELECTED = "Avval saqlanadigan ma'nolarni belgilang."
-EXPIRED = "Bu qidiruv eskirdi. So'zni qaytadan yozing."
-CANCELLED = "Bekor qilindi."
 SETTINGS_SAVED = "Saqlandi."
 
 NOTHING_DUE = (
@@ -30,31 +26,29 @@ NOTHING_DUE = (
 )
 
 
-def format_lookup(result: LookupResult, selected: set[int]) -> str:
-    """The lookup reply, rebuilt on every toggle so the message can be edited in place."""
-    lines = [f"<b>{_escape(result.term)}</b>"]
-    if result.ipa:
-        lines.append(f"<code>{_escape(result.ipa)}</code>")
+def format_translation(
+    *, term: str, translation: str, ipa: str | None, deck_name: str, already_saved: bool
+) -> str:
+    """The whole reply: the word, its translations on one line, and where it went."""
+    lines = [f"<b>{_escape(term)}</b>"]
+    if ipa:
+        lines.append(f"<code>{_escape(ipa)}</code>")
     lines.append("")
-
-    for index, meaning in enumerate(result.meanings):
-        mark = "☑" if index in selected else "☐"
-        pos = f" <i>{_escape(meaning.pos)}</i>" if meaning.pos else ""
-        lines.append(f"{mark} <b>{index + 1}.</b>{pos} {_escape(meaning.definition)}")
-        if meaning.gloss_en and meaning.gloss_en != meaning.definition:
-            lines.append(f"    <i>{_escape(meaning.gloss_en)}</i>")
-
+    lines.append(_escape(translation))
     lines.append("")
     lines.append(
-        "Saqlanadigan ma'nolarni belgilang va <b>Saqlash</b>ni bosing."
-        if not selected
-        else f"{len(selected)} ta ma'no belgilandi."
+        f"<i>{_escape(deck_name)} to'plamida bor</i>"
+        if already_saved
+        else f"<i>Saqlandi → {_escape(deck_name)}</i>"
     )
     return "\n".join(lines)
 
 
-def format_saved(term: str, deck_name: str, count: int) -> str:
-    return f"<b>{_escape(term)}</b> saqlandi — {deck_name} to'plamiga, {count} ta ma'no bilan."
+def format_languages(source_lang: str, target_lang: str) -> str:
+    return (
+        f"Hozir <b>{source_lang.upper()} → {target_lang.upper()}</b>.\n"
+        f"O'zgartirish uchun tilni tanlang:"
+    )
 
 
 def format_due_counts(new: int, learning: int, due: int) -> str:

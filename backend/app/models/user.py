@@ -29,6 +29,11 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_name: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # The pair the user is translating. `native_lang` is the target — what meanings
+    # are shown in — and `source_lang` is the language being read.
+    source_lang: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="en", server_default="en"
+    )
     native_lang: Mapped[str] = mapped_column(
         String(8),
         nullable=False,

@@ -119,3 +119,46 @@ async def handle_settings_callback(query: CallbackQuery, context: BotContext) ->
             reply_markup=keyboards.settings_keyboard(enabled, hour),
         )
     await query.answer(texts.SETTINGS_SAVED)
+
+
+@router.message(F.text == keyboards.LANGS_LABEL)
+@router.message(Command("til"))
+async def handle_languages(message: Message, context: BotContext) -> None:
+    """Change the language pair without leaving the chat."""
+    if message.from_user is None:
+        return
+
+    user = await resolve_user(context, message.from_user)
+    await message.answer(
+        texts.format_languages(user.source_lang, user.native_lang),
+        reply_markup=keyboards.language_keyboard("src", user.source_lang),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{keyboards.LANG_PREFIX}:"))
+async def handle_language_choice(query: CallbackQuery, context: BotContext) -> None:
+    if query.from_user is None or query.data is None:
+        return
+
+    _, field, value = query.data.split(":", 2)
+
+    async with context.session_factory() as session:
+        user = await auth_service.upsert_user(session, telegram_user_from(query.from_user))
+
+        if field == "src":
+            user.source_lang = value
+        elif field == "dst":
+            user.native_lang = value
+        await session.commit()
+        source, target = user.source_lang, user.native_lang
+
+    # "switch" only moves the picker to the other side of the pair.
+    showing = value if field == "switch" else ("dst" if field == "src" else "src")
+    current = source if showing == "src" else target
+
+    if isinstance(query.message, Message):
+        await query.message.edit_text(
+            texts.format_languages(source, target),
+            reply_markup=keyboards.language_keyboard(showing, current),
+        )
+    await query.answer(texts.LANGUAGES_SAVED if field != "switch" else None)

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import async_session_factory
 from app.models.card import Card
 from app.models.user import User
-from app.telegram import keyboards, pending, texts
+from app.telegram import keyboards, texts
 from app.telegram.handlers import capture, commands
 from app.telegram.handlers.deps import BotContext
 
@@ -123,24 +123,10 @@ async def test_review_says_nothing_is_due_when_nothing_is(context: BotContext) -
     assert message.sent[0].text == texts.NOTHING_DUE
 
 
-async def test_review_deep_links_into_the_review_screen(
-    context: BotContext, client: AsyncClient, auth_headers: dict[str, str]
-) -> None:
+async def test_review_deep_links_into_the_review_screen(context: BotContext) -> None:
     """SPEC §10: the reminder button depends on `startapp=review`."""
     await commands.handle_start(FakeMessage(text="/start"), context=context)  # type: ignore[arg-type]
-
-    # Save a card for this same telegram user through the bot's own path.
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
-    await capture.handle_toggle(
-        FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:{token}:0", message=message),  # type: ignore[arg-type]
-        context=context,
-    )
-    await capture.handle_save(
-        FakeCallback(data=f"{keyboards.SAVE_PREFIX}:{token}", message=message),  # type: ignore[arg-type]
-        context=context,
-    )
+    await capture.handle_bare_word(FakeMessage(text="serendipity"), context=context)  # type: ignore[arg-type]
 
     review = FakeMessage(text="/review")
     await commands.handle_review(review, context=context)  # type: ignore[arg-type]
@@ -150,96 +136,36 @@ async def test_review_deep_links_into_the_review_screen(
     assert "startapp=review" in url
 
 
-# --- Bare-word capture ----------------------------------------------------------
+# --- Bare-word capture -----------------------------------------------------------
 
 
-def _token_from(sent: SentMessage) -> str:
-    data = sent.reply_markup.inline_keyboard[0][0].callback_data
-    return str(data).split(":")[1]
-
-
-async def test_a_bare_word_returns_meanings_with_one_button_each(
-    context: BotContext,
+async def test_a_bare_word_is_translated_and_saved_in_one_step(
+    context: BotContext, db_session: AsyncSession
 ) -> None:
-    """M6 acceptance, first half."""
-    message = FakeMessage(text="serendipity")
+    """The product loop: type a word, read one line, it is already kept."""
+    message = FakeMessage(text="run")
 
     await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
 
+    # One reply, no buttons: there is nothing for the user to do.
     assert len(message.sent) == 1
+    assert message.sent[0].reply_markup is None
+
     body = message.sent[0].text
-    assert "serendipity" in body
-    assert "tasodifiy omad" in body
+    assert "run" in body
+    assert "yugurmoq, chopmoq, boshqarmoq, yugurish" in body
+    assert "Saqlandi" in body
 
-    rows = message.sent[0].reply_markup.inline_keyboard
-    # One toggle per meaning, plus the action row.
-    assert len(rows) == 3 + 1
-    # Saqlash is hidden until something is selected.
-    assert all(button.text != keyboards.SAVE_LABEL for button in rows[-1])
-
-
-async def test_toggling_edits_the_message_in_place(context: BotContext) -> None:
-    """SPEC §9a: edit in place rather than sending new messages."""
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
-
-    query = FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:{token}:1", message=message)
-    await capture.handle_toggle(query, context=context)  # type: ignore[arg-type]
-
-    # Edited, not resent.
-    assert len(message.sent) == 1
-    assert len(message.edits) == 1
-    assert "1 ta ma'no belgilandi" in message.edits[0].text
-    # Saqlash appears once something is selected.
-    assert any(
-        button.text == keyboards.SAVE_LABEL
-        for button in message.edits[0].reply_markup.inline_keyboard[-1]
-    )
-
-
-async def test_toggling_twice_deselects(context: BotContext) -> None:
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
-
-    for _ in range(2):
-        await capture.handle_toggle(
-            FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:{token}:0", message=message),  # type: ignore[arg-type]
-            context=context,
-        )
-
-    assert len(message.edits) == 2
-    assert "belgilang" in message.edits[-1].text
-
-
-async def test_saving_writes_to_todays_daily_deck_and_shows_in_the_mini_app(
-    context: BotContext,
-    client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """M6 acceptance, second half: the card is immediately visible in the Mini App."""
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
-
-    for index in (0, 2):
-        await capture.handle_toggle(
-            FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:{token}:{index}", message=message),  # type: ignore[arg-type]
-            context=context,
-        )
-
-    save = FakeCallback(data=f"{keyboards.SAVE_PREFIX}:{token}", message=message)
-    await capture.handle_save(save, context=context)  # type: ignore[arg-type]
-
-    assert save.answers[-1]["text"] == "Saqlandi"
-    assert "saqlandi" in message.edits[-1].text
-
-    card = await db_session.scalar(select(Card).where(Card.term == "serendipity"))
+    card = await db_session.scalar(select(Card).where(Card.term == "run"))
     assert card is not None
-    assert len(card.meanings) == 2
 
-    # ...and the Mini App, authenticating as the same telegram user, sees it.
+
+async def test_the_word_lands_in_todays_deck_for_the_users_pair(
+    context: BotContext, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """M6 acceptance, restated: the card is immediately visible in the Mini App."""
+    await capture.handle_bare_word(FakeMessage(text="serendipity"), context=context)  # type: ignore[arg-type]
+
     from tests.factories import make_init_data
 
     auth = await client.post(
@@ -247,85 +173,94 @@ async def test_saving_writes_to_todays_daily_deck_and_shows_in_the_mini_app(
     )
     headers = {"Authorization": f"Bearer {auth.json()['access_token']}"}
 
-    daily = await client.get("/api/v1/decks/daily", headers=headers)
-    assert daily.json()["id"] == str(card.deck_id)
-    assert daily.json()["kind"] == "daily"
+    decks = await client.get("/api/v1/decks", headers=headers)
+    daily = decks.json()[0]
+    assert daily["kind"] == "daily"
+    assert daily["source_lang"] == "en"
+    assert daily["target_lang"] == "uz"
+    assert "EN → UZ" in daily["name"]
 
-    cards = await client.get(f"/api/v1/decks/{daily.json()['id']}/cards", headers=headers)
+    cards = await client.get(f"/api/v1/decks/{daily['id']}/cards", headers=headers)
     assert [item["term"] for item in cards.json()["items"]] == ["serendipity"]
 
 
-async def test_saving_nothing_selected_is_refused(context: BotContext) -> None:
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
+async def test_the_same_word_twice_is_not_an_error(
+    context: BotContext, db_session: AsyncSession
+) -> None:
+    """Asking the same question twice deserves the same answer, not a complaint."""
+    await capture.handle_bare_word(FakeMessage(text="run"), context=context)  # type: ignore[arg-type]
+    second = FakeMessage(text="run")
+    await capture.handle_bare_word(second, context=context)  # type: ignore[arg-type]
 
-    save = FakeCallback(data=f"{keyboards.SAVE_PREFIX}:{token}", message=message)
-    await capture.handle_save(save, context=context)  # type: ignore[arg-type]
+    assert "yugurmoq" in second.sent[0].text
+    assert "to'plamida bor" in second.sent[0].text
 
-    assert save.answers[-1]["text"] == texts.NOTHING_SELECTED
-    assert save.answers[-1]["show_alert"] is True
-
-
-async def test_saving_the_same_word_twice_is_refused_clearly(context: BotContext) -> None:
-    async def save_once() -> FakeCallback:
-        message = FakeMessage(text="serendipity")
-        await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-        token = _token_from(message.sent[0])
-        await capture.handle_toggle(
-            FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:{token}:0", message=message),  # type: ignore[arg-type]
-            context=context,
-        )
-        save = FakeCallback(data=f"{keyboards.SAVE_PREFIX}:{token}", message=message)
-        await capture.handle_save(save, context=context)  # type: ignore[arg-type]
-        return save
-
-    await save_once()
-    second = await save_once()
-
-    assert "allaqachon bor" in str(second.answers[-1]["text"])
+    cards = (await db_session.scalars(select(Card).where(Card.term == "run"))).all()
+    assert len(cards) == 1
 
 
-async def test_cancel_drops_the_pending_lookup(context: BotContext) -> None:
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
+async def test_switching_language_files_into_a_separate_deck(
+    context: BotContext, client: AsyncClient
+) -> None:
+    """A user who changes pair mid-day gets two decks, so review never mixes tongues."""
+    await capture.handle_bare_word(FakeMessage(text="run"), context=context)  # type: ignore[arg-type]
 
-    await capture.handle_cancel(
-        FakeCallback(data=f"{keyboards.CANCEL_PREFIX}:{token}", message=message),  # type: ignore[arg-type]
+    await commands.handle_language_choice(
+        FakeCallback(data="l:src:ru", message=FakeMessage()),  # type: ignore[arg-type]
+        context=context,
+    )
+    await capture.handle_bare_word(FakeMessage(text="voda"), context=context)  # type: ignore[arg-type]
+
+    from tests.factories import make_init_data
+
+    auth = await client.post(
+        "/api/v1/auth/telegram", json={"init_data": make_init_data(telegram_id=555_000_111)}
+    )
+    headers = {"Authorization": f"Bearer {auth.json()['access_token']}"}
+
+    decks = await client.get("/api/v1/decks", headers=headers)
+    pairs = {(deck["source_lang"], deck["target_lang"]) for deck in decks.json()}
+
+    assert pairs == {("en", "uz"), ("ru", "uz")}
+
+
+async def test_the_language_picker_saves_both_sides(
+    context: BotContext, db_session: AsyncSession
+) -> None:
+    message = FakeMessage(text="Til")
+    await commands.handle_languages(message, context=context)  # type: ignore[arg-type]
+    assert "EN → UZ" in message.sent[0].text
+
+    await commands.handle_language_choice(
+        FakeCallback(data="l:src:de", message=message),  # type: ignore[arg-type]
+        context=context,
+    )
+    await commands.handle_language_choice(
+        FakeCallback(data="l:dst:ru", message=message),  # type: ignore[arg-type]
         context=context,
     )
 
-    assert message.edits[-1].text == texts.CANCELLED
-    assert await pending.load(context.redis, token) is None
+    user = await db_session.scalar(select(User).where(User.telegram_id == 555_000_111))
+    assert user is not None
+    await db_session.refresh(user)
+    assert (user.source_lang, user.native_lang) == ("de", "ru")
 
 
-async def test_an_expired_token_says_so(context: BotContext) -> None:
-    message = FakeMessage(text="x")
+async def test_switch_only_moves_the_picker_without_changing_the_pair(
+    context: BotContext, db_session: AsyncSession
+) -> None:
+    message = FakeMessage(text="Til")
+    await commands.handle_languages(message, context=context)  # type: ignore[arg-type]
 
-    await capture.handle_toggle(
-        FakeCallback(data=f"{keyboards.TOGGLE_PREFIX}:nosuchtoken:0", message=message),  # type: ignore[arg-type]
+    await commands.handle_language_choice(
+        FakeCallback(data="l:switch:dst", message=message),  # type: ignore[arg-type]
         context=context,
     )
 
-    assert message.edits[-1].text == texts.EXPIRED
-
-
-async def test_another_users_buttons_do_nothing(context: BotContext) -> None:
-    """A forwarded message must not let someone press another user's buttons."""
-    message = FakeMessage(text="serendipity")
-    await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
-    token = _token_from(message.sent[0])
-    edits_before = len(message.edits)
-
-    stranger = FakeCallback(
-        data=f"{keyboards.TOGGLE_PREFIX}:{token}:0",
-        message=message,
-        from_user=FakeFrom(id=999_888_777, username="stranger"),
-    )
-    await capture.handle_toggle(stranger, context=context)  # type: ignore[arg-type]
-
-    assert len(message.edits) == edits_before
+    user = await db_session.scalar(select(User).where(User.telegram_id == 555_000_111))
+    assert user is not None
+    await db_session.refresh(user)
+    assert (user.source_lang, user.native_lang) == ("en", "uz")
 
 
 # --- §8 validation, same rules as the API ---------------------------------------
@@ -339,7 +274,7 @@ async def test_another_users_buttons_do_nothing(context: BotContext) -> None:
     ],
 )
 async def test_abusive_input_is_refused_without_a_provider_call(
-    context: BotContext, text: str, expected: str
+    context: BotContext, db_session: AsyncSession, text: str, expected: str
 ) -> None:
     """SPEC §9a: the bot applies the same §8 validation as the API."""
     message = FakeMessage(text=text)
@@ -347,14 +282,13 @@ async def test_abusive_input_is_refused_without_a_provider_call(
     await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
 
     assert message.sent[0].text == expected
-    # Nothing was staged, so nothing reached a provider.
-    assert message.sent[0].reply_markup is None
+    # Nothing reached a provider, and nothing was filed.
+    assert (await db_session.scalars(select(Card))).all() == []
 
 
-async def test_the_web_app_button_label_is_not_treated_as_a_lookup(
-    context: BotContext,
-) -> None:
-    message = FakeMessage(text=keyboards.OPEN_APP_LABEL)
+@pytest.mark.parametrize("label", ["Takrorlash", "Til", "Memorani ochish"])
+async def test_a_keyboard_label_is_not_treated_as_a_word(context: BotContext, label: str) -> None:
+    message = FakeMessage(text=label)
 
     await capture.handle_bare_word(message, context=context)  # type: ignore[arg-type]
 

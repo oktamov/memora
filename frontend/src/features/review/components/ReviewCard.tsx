@@ -53,25 +53,11 @@ export function ReviewCard({
               <p className="mt-1.5 font-mono text-sm text-paper/40">{card.ipa}</p>
             ) : null}
 
-            <ul className="mt-6 space-y-4">
-              {card.meanings.map((meaning, index) => (
-                <li key={`${meaning.definition}-${index}`}>
-                  {meaning.pos ? (
-                    <span className="mb-1 block font-mono text-[0.62rem] uppercase tracking-[0.18em] text-paper/30">
-                      {meaning.pos}
-                    </span>
-                  ) : null}
-                  <p className="text-[1.15rem] font-light leading-snug text-paper/90">
-                    {meaning.definition}
-                  </p>
-                  {meaning.gloss_en && meaning.gloss_en !== meaning.definition ? (
-                    <p className="mt-1 text-sm font-light leading-snug text-paper/40">
-                      {meaning.gloss_en}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            {/* Every translation on one line — the same thing the user read when
+                they saved the word, so recall is tested against what they learned. */}
+            <p className="mt-7 text-[1.4rem] font-light leading-snug text-paper/90">
+              {card.meanings.map((meaning) => meaning.definition).join(', ')}
+            </p>
 
             {card.examples.length > 0 ? (
               <figure className="mt-7 border-l-2 border-saffron/45 pl-4">

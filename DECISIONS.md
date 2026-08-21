@@ -203,3 +203,45 @@ the bug back turns two of them red, which was verified rather than assumed.
 **The general lesson for this file:** a hand-written crypto validator needs to be
 checked against a reference implementation on a payload shaped like a real one, not
 only against fixtures written by the same person who wrote the validator.
+
+## D28 — The product is a translator, and `/lookup` no longer refuses to save
+The app was built as a monolingual dictionary: an English word returned English
+definitions, and the user ticked which ones to keep. That is not the product. The user
+picks a language pair, types a word, and wants every translation of it on one
+comma-separated line — already saved, with nothing else to do. "Bu app ni juda dangasa
+odamlar ishlatishadi."
+
+Four consequences, all deliberate departures from the spec as written:
+
+**SPEC §7 says "`/lookup` never writes a card".** That rule was written for a flow where
+the user chose what to keep. Requiring a second tap is now the single piece of friction
+the product exists to remove. **Choice:** `POST /translate` translates *and* files the
+word; `POST /lookup` stays a pure read, unchanged, because that is the shape a public
+developer API takes — which is where this is going next.
+
+**SPEC §6's provider chain was dictionary-first.** FreeDictionary returns English
+definitions, which is the wrong output entirely. **Choice:** the chain is now Azure
+Dictionary Lookup (alternative translations with parts of speech, one fast call, but
+only for pairs involving English) then Gemini (structured output, any pair). Both return
+target-language text directly, so the separate translation step and its batch-alignment
+problem are gone. `FreeDictionaryProvider` is kept and still tested — it is the right
+tool if English definitions are ever wanted again — but nothing routes to it.
+
+**A daily deck is now per language pair.** `(user_id, daily_date)` became
+`(user_id, daily_date, source_lang, target_lang)`, so a user who switches from EN→UZ to
+RU→UZ mid-day gets two decks and a review session never mixes languages.
+
+**The meaning-selection UI is gone**, in the app and in the bot. No chips, no inline
+toggle buttons, no "Saqlash". The bot replies once, with the word, the translations and
+where they went.
+
+## D29 — Translating the same word twice checks first rather than recovering after
+The first version let the duplicate INSERT fail and caught `ConflictError`. That works
+in a service-level test and returns **500** over HTTP: `create_card` rolls the session
+back, and the very next `SELECT` on that session re-raises the original
+`IntegrityError`. **Choice:** look the card up before inserting. A repeat translation is
+an ordinary thing to do, not an exception. The `ConflictError` catch stays as a
+backstop for two devices racing on the same word.
+
+**Why the tests missed it:** every duplicate test called the service directly. The
+regression test now goes through HTTP, where the session lifecycle is the real one.

@@ -60,10 +60,15 @@ class Deck(Base):
     __table_args__ = (
         # One daily deck per user per calendar day. The partial index is what makes
         # concurrent first-saves of the day safe (SPEC §5).
+        # One daily deck per user per day *per language pair*: a user who switches
+        # from EN→UZ to RU→UZ mid-day gets two decks, so review sessions never mix
+        # languages.
         Index(
             "uq_decks_user_daily_date",
             "user_id",
             "daily_date",
+            "source_lang",
+            "target_lang",
             unique=True,
             postgresql_where=DAILY_DECK_PREDICATE,
         ),
