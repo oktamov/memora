@@ -13,6 +13,7 @@ from aiogram.types import (
 from app.core.config import settings
 
 OPEN_APP_LABEL = "Memorani ochish"
+REVIEW_LABEL = "Takrorlash"
 SAVE_LABEL = "Saqlash"
 
 # Callback data is bounded to 64 bytes by Telegram, so the payloads stay terse.
@@ -22,11 +23,21 @@ CANCEL_PREFIX = "x"
 
 
 def persistent_keyboard() -> ReplyKeyboardMarkup:
-    """The persistent reply keyboard shown after `/start`."""
+    """A plain reply keyboard — no WebApp button on it.
+
+    SPEC §9a asks for "a persistent reply keyboard with a WebAppInfo button", but a
+    Mini App opened from a `KeyboardButton` receives **no initData**: Telegram reserves
+    that launch type for `sendData` flows, and the SDK's own types say so —
+    "Current launch init data. Can be missing in case, application was launched via
+    KeyboardButton." Without initData there is no HMAC to validate (SPEC §7), so the
+    app can only show "open me through Telegram" — from inside Telegram.
+
+    The persistent entry point is therefore the BotFather menu button, and every
+    message that offers to open the app uses an *inline* WebApp button, which does
+    carry initData. See DECISIONS.md D26.
+    """
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=OPEN_APP_LABEL, web_app=WebAppInfo(url=settings.MINI_APP_URL))]
-        ],
+        keyboard=[[KeyboardButton(text=REVIEW_LABEL)]],
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="So'zni yozing…",

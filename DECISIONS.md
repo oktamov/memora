@@ -154,3 +154,24 @@ SRS app does and what a user expects to see at 9am.
 The heatmap needs the gaps as much as the marks; returning only active days would let
 the client close the gaps up and render a longer streak than the user has. The service
 fills the range in Python after grouping, so the API contract is a fixed-length series.
+
+## D26 — `/start` offers an *inline* WebApp button, not the reply keyboard SPEC §9a asks for
+SPEC §9a specifies "a persistent reply keyboard with a `WebAppInfo` button labeled
+'Memorani ochish'". Implemented literally, the app opened from that button and then
+showed "Ilovani Telegram orqali oching" **from inside Telegram** — because a Mini App
+launched from a `KeyboardButton` receives no `initData`. Telegram reserves that launch
+type for `sendData` flows; `@telegram-apps/types` states it outright: *"Current launch
+init data. Can be missing in case, application was launched via KeyboardButton."*
+
+No initData means no HMAC to validate, and SPEC §7 makes that HMAC the entire basis of
+authentication — so the button could open the app but never sign the user in.
+
+**Choice:** every offer to open the app uses an **inline** WebApp button, which does
+carry initData. The persistent entry point becomes the BotFather menu button, which sits
+beside the input field permanently and authenticates correctly. The reply keyboard stays
+but carries only a plain "Takrorlash" shortcut, so no button in the bot can ever lead to
+an unauthenticated app.
+
+**How this was caught:** on a real phone, via the bot. It cannot be reproduced in a
+browser, because outside Telegram every launch path lacks initData and the same error
+screen is the *correct* output.

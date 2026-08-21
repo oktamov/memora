@@ -48,9 +48,12 @@ async def handle_start(message: Message, context: BotContext) -> None:
     user = await resolve_user(context, message.from_user)
     logger.info("bot_start", extra={"event": "bot_start", "user_id": str(user.id)})
 
-    await message.answer(texts.GREETING, reply_markup=keyboards.persistent_keyboard())
+    # An inline WebApp button, not the reply keyboard: only this launch type carries
+    # initData, which is the app's entire basis for authentication (DECISIONS.md D26).
+    await message.answer(texts.GREETING, reply_markup=keyboards.open_app_button())
 
 
+@router.message(F.text == keyboards.REVIEW_LABEL)
 @router.message(Command("review"))
 async def handle_review(message: Message, context: BotContext) -> None:
     if message.from_user is None:

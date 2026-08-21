@@ -98,9 +98,12 @@ async def test_start_upserts_the_user_and_offers_the_web_app_button(
 
     assert len(message.sent) == 1
     assert "Memora" in message.sent[0].text
-    keyboard = message.sent[0].reply_markup
-    assert keyboard.keyboard[0][0].text == keyboards.OPEN_APP_LABEL
-    assert keyboard.keyboard[0][0].web_app is not None
+
+    # An *inline* WebApp button. A reply-keyboard button opens the app without any
+    # initData, leaving it unable to authenticate from inside Telegram (D26).
+    button = message.sent[0].reply_markup.inline_keyboard[0][0]
+    assert button.text == keyboards.OPEN_APP_LABEL
+    assert button.web_app is not None
 
     user = await db_session.scalar(select(User).where(User.telegram_id == 555_000_111))
     assert user is not None
@@ -392,3 +395,21 @@ async def test_settings_shifts_the_reminder_hour(
     assert user is not None
     await db_session.refresh(user)
     assert user.reminder_hour == 21
+
+
+async def test_the_reply_keyboard_carries_no_web_app_button(context: BotContext) -> None:
+    """The one launch type that yields no initData must not be offered at all."""
+    keyboard = keyboards.persistent_keyboard()
+
+    for row in keyboard.keyboard:
+        for button in row:
+            assert button.web_app is None
+
+
+async def test_the_review_shortcut_is_not_treated_as_a_lookup(context: BotContext) -> None:
+    """The reply keyboard posts its label back as plain text."""
+    message = FakeMessage(text=keyboards.REVIEW_LABEL)
+
+    await commands.handle_review(message, context=context)  # type: ignore[arg-type]
+
+    assert message.sent[0].text == texts.NOTHING_DUE
