@@ -131,3 +131,41 @@ def test_blank_valued_fields_are_kept_in_the_data_check_string() -> None:
     )
 
     assert validate_init_data(raw, DUMMY_BOT_TOKEN).user.telegram_id == 7
+
+
+def test_a_signature_field_stays_inside_the_data_check_string() -> None:
+    """Newer clients send `signature` next to `hash`; only `hash` is ever excluded.
+
+    Telegram uses `signature` for third-party Ed25519 validation, which tempts you to
+    drop it here too. Dropping it changes the data-check string, so the HMAC never
+    matches and every real launch is rejected as a forgery — exactly what happened in
+    production before this test existed.
+    """
+    raw = make_init_data(telegram_id=42, signature="Ed25519-third-party-signature")
+
+    result = validate_init_data(raw, DUMMY_BOT_TOKEN)
+
+    assert result.user.telegram_id == 42
+    assert result.raw["signature"] == "Ed25519-third-party-signature"
+
+
+def test_a_tampered_signature_is_still_rejected() -> None:
+    """Keeping the field must not mean ignoring it."""
+    fields = dict(parse_qsl(make_init_data(signature="original"), keep_blank_values=True))
+    fields["signature"] = "swapped"
+
+    with pytest.raises(UnauthorizedError) as exc:
+        validate_init_data(urlencode(fields), DUMMY_BOT_TOKEN)
+
+    assert exc.value.code == "init_data_bad_hash"
+
+
+def test_our_validator_agrees_with_aiogram() -> None:
+    """Cross-check against a reference implementation, on a payload shaped like a real
+    one. The production bug was a divergence from exactly this."""
+    from aiogram.utils.web_app import check_webapp_signature
+
+    raw = make_init_data(telegram_id=7, signature="sig", start_param="review")
+
+    assert check_webapp_signature(DUMMY_BOT_TOKEN, raw) is True
+    assert validate_init_data(raw, DUMMY_BOT_TOKEN).user.telegram_id == 7

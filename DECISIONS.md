@@ -182,3 +182,24 @@ screen is the *correct* output.
 `reply_markup` per message means this needs two messages. And the app now calls
 `set_chat_menu_button` on startup, so the persistent entry point SPEC §9a wanted exists
 without anyone having to remember a BotFather step.
+
+## D27 — Only `hash` is removed from the data-check string; `signature` stays in
+Newer Telegram clients send a `signature` field alongside `hash` — the Ed25519 value
+used for *third-party* validation. The validator originally stripped it before
+computing the HMAC, reasoning that it belonged to a different algorithm. It does not:
+Telegram excludes **only** `hash`, and SPEC §7 step 1 already said so in as many words
+— "pull out `hash`, keep every other key".
+
+Stripping it produced a different data-check string, so the HMAC never matched and
+every genuine launch was rejected as a forgery: "initData imzosi noto'g'ri", from
+inside Telegram.
+
+**Why the tests missed it:** `tests/factories.py` never generated a `signature` field,
+so the extra `pop` was a no-op in every test — the fixtures were a cleaner world than
+production. `make_init_data` now takes `signature=`, and three tests cover it,
+including a cross-check against `aiogram.utils.web_app.check_webapp_signature`. Putting
+the bug back turns two of them red, which was verified rather than assumed.
+
+**The general lesson for this file:** a hand-written crypto validator needs to be
+checked against a reference implementation on a payload shaped like a real one, not
+only against fixtures written by the same person who wrote the validator.

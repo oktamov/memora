@@ -83,9 +83,11 @@ def validate_init_data(
     if not received_hash:
         raise UnauthorizedError("initData imzosi yo'q.", code="init_data_no_hash")
 
-    # `signature` is Telegram's separate Ed25519 third-party field; it is not part of
-    # the HMAC data-check string.
-    fields.pop("signature", None)
+    # Nothing else is removed. SPEC §7 step 1 says "pull out `hash`, keep every other
+    # key", and Telegram means it literally: newer clients also send `signature` (the
+    # Ed25519 field used for *third-party* validation), and it is still part of the
+    # data-check string for the bot's own HMAC. Excluding it produces a different
+    # string and therefore a hash that never matches.
 
     # Steps 2-4.
     expected = _expected_hash(_data_check_string(fields), bot_token)

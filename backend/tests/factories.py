@@ -32,6 +32,7 @@ def make_init_data(
     language_code: str | None = "uz",
     auth_date: int | None = None,
     start_param: str | None = None,
+    signature: str | None = None,
     bot_token: str = DUMMY_BOT_TOKEN,
 ) -> str:
     """A valid, freshly signed initData string."""
@@ -48,4 +49,8 @@ def make_init_data(
     }
     if start_param is not None:
         fields["start_param"] = start_param
+    if signature is not None:
+        # Newer Telegram clients send this alongside `hash`. It stays *inside* the
+        # data-check string for the bot's HMAC (see tests/test_init_data.py).
+        fields["signature"] = signature
     return sign_init_data(fields, bot_token)
