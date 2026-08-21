@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, Response, status
 
 from app.core.deps import CurrentUser, DbSession
 from app.schemas.deck import DeckCreateRequest, DeckResponse, DeckUpdateRequest
-from app.services import deck_service
+from app.services import card_service, deck_service
 
 router = APIRouter(prefix="/decks", tags=["decks"])
 
@@ -19,7 +19,7 @@ async def list_decks(
 ) -> list[DeckResponse]:
     """Decks with their card and due counts, today's daily deck pinned first."""
     decks = await deck_service.list_decks(session, user, include_archived=include_archived)
-    counts = await deck_service.deck_counts(session, user)
+    counts = await card_service.deck_counts(session, user)
     return [_with_counts(deck, counts) for deck in decks]
 
 
@@ -41,14 +41,14 @@ async def create_deck(
 async def read_daily_deck(user: CurrentUser, session: DbSession) -> DeckResponse:
     """Today's daily deck in the user's timezone, created if this is the first call."""
     deck = await deck_service.get_or_create_daily_deck(session, user)
-    counts = await deck_service.deck_counts(session, user)
+    counts = await card_service.deck_counts(session, user)
     return _with_counts(deck, counts)
 
 
 @router.get("/{deck_id}", response_model=DeckResponse)
 async def read_deck(deck_id: UUID, user: CurrentUser, session: DbSession) -> DeckResponse:
     deck = await deck_service.get_deck(session, user, deck_id)
-    counts = await deck_service.deck_counts(session, user)
+    counts = await card_service.deck_counts(session, user)
     return _with_counts(deck, counts)
 
 

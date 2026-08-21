@@ -18,6 +18,7 @@ from uuid6 import uuid7
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.card import Card
     from app.models.user import User
 
 
@@ -52,6 +53,9 @@ class Deck(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="decks", lazy="raise")
+    cards: Mapped[list["Card"]] = relationship(
+        back_populates="deck", cascade="all, delete-orphan", lazy="raise"
+    )
 
     __table_args__ = (
         # One daily deck per user per calendar day. The partial index is what makes

@@ -180,3 +180,62 @@ compose: /health ok · tables: users, decks, lookup_cache, alembic_version
          logs api | grep '"level": "ERROR"' → (none)
          alembic check → No new upgrade operations detected
 ```
+
+---
+
+## M3 — Cards
+
+- [x] `models/card.py` — `Card` + `CardState`, 1:1, unique `(deck_id, term)`, index `(user_id, due) WHERE suspended = false`
+- [x] Keep scheduling state off `cards` entirely (SPEC §13)
+- [x] Alembic migration `0004_cards`
+- [x] `schemas/card.py` — `meanings` and `examples` in exactly the SPEC §5 shapes, `source` ∈ {user, provider}
+- [x] `services/card_service.py` — create card + `card_states` row in one transaction
+- [x] Omitting `deck_id` targets today's daily deck
+- [x] Duplicate `(deck_id, term)` rejected with a clear error, not a 500
+- [x] `display_term` keeps the user's spelling; `term` is normalized
+- [x] `source_lang`/`target_lang` copied from the deck at creation
+- [x] User's own examples ordered before provider ones (SPEC §5)
+- [x] `POST /cards`, `GET /decks/{id}/cards` (cursor-paginated), `PATCH /cards/{id}` (meanings, note, move deck), `DELETE /cards/{id}`, `POST /cards/{id}/suspend`
+- [x] `deck_service.deck_counts` now returns real card/due/new counts in one query
+- [x] Tests: save from a lookup result, duplicate rejection, daily-deck default, cursor pagination, move between decks, suspend toggle, cross-user isolation, cascade delete
+- [x] Gates: ruff, mypy, pytest, frontend lint/tsc/build, compose health, no ERROR logs
+
+### M3 log
+
+**Shipped.** `cards` and `card_states` as two tables — content and scheduling stay
+apart, exactly as SPEC §13 insists — created together in one transaction so no card
+ever exists without a state. Full CRUD, keyset pagination, in-deck search, deck moves,
+suspend toggle, and real card/due/new counts on the decks list in a single grouped
+query.
+
+**Decided.** Three things the implementation forced, all written up in DECISIONS.md:
+the ORM relationship is `card_state` because `state` collided with the response field
+(D11); error messages snapshot `deck.id` and `display_term` before the flush, because a
+failed flush expires the objects and reading them in the `except` raises
+`MissingGreenlet` instead of the intended 409 (D12); pagination is keyset on the
+UUIDv7 id, since offsets drift as cards are saved mid-scroll (D13).
+
+**Deferred.** Nothing. `deck_counts` moved from its M1 placeholder to a real query.
+
+**Gate output.**
+```
+ruff check . → All checks passed!   ruff format --check . → 64 files already formatted
+mypy app/services app/providers app/srs app/telegram → Success: no issues found in 20 source files
+pytest -q → 110 passed
+  · save from a lookup result → 201, one card_states row, state=0, reps=0
+  · same word twice in one deck → 409 card_duplicate, message names the word  ← M3 acceptance
+  · "Run" then "  RUN  " → 409 (same normalized term)
+  · "  Serendipity " → term=serendipity, display_term=Serendipity
+  · same word in two decks → both 201 (the index is (deck_id, term))
+  · no deck_id → lands in today's daily deck
+  · reader's own example sorted ahead of the provider's
+  · pagination: 5 cards at limit=2 → word4/word3, word2/word1, word0, next_cursor null
+  · move onto a duplicate → 409; archived deck → 409 deck_archived
+  · suspend toggles, and a suspended card drops out of due_count
+  · delete card → state gone; delete deck → cards and states gone
+  · another user gets 404 on patch, delete and suspend
+eslint → No issues found   tsc --noEmit → No errors found   vite build → built in 501ms
+compose: /health ok · tables now include cards and card_states
+         logs api | grep '"level": "ERROR"' → (none)
+         alembic check → No new upgrade operations detected
+```

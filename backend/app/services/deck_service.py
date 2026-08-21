@@ -193,15 +193,3 @@ class DeckCounts:
     total: int = 0
     due: int = 0
     new: int = 0
-
-
-async def deck_counts(
-    session: AsyncSession, user: User, *, now: datetime | None = None
-) -> dict[UUID, DeckCounts]:
-    """Card, due and new counts per deck, in one query.
-
-    The `cards` and `card_states` tables arrive in M3; until then every deck is empty
-    and the honest answer is zero for all three.
-    """
-    del session, user, now  # no cards table yet
-    return {}

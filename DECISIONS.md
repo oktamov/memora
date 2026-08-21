@@ -37,3 +37,23 @@ is where it actually matters.
 `gloss_en` alone. This keeps the provider a pure dictionary with no translation
 knowledge, and satisfies SPEC §6's "keep the English gloss in `gloss_en`" with a single
 batched translation call per lookup.
+
+## D11 — The `Card → CardState` relationship is named `card_state`, not `state`
+`CardResponse.state` carries the scheduling state in the API. With the ORM
+relationship also called `state`, pydantic's `model_validate(card)` reached for the
+`lazy="raise"` relationship while serialising and blew up on every card response.
+**Choice:** name the relationship `card_state`; the API field stays `state`, so the
+wire contract is untouched.
+
+## D12 — Error messages snapshot their ingredients before the write
+A failed flush expires every ORM object in the session, so reading `deck.id` or
+`card.display_term` *inside* the `except IntegrityError` block attempts lazy IO outside
+the async greenlet and raises `MissingGreenlet` instead of the intended 409.
+**Choice:** copy what the error message needs into plain locals before `commit()`.
+This is why `create_card` and `update_card` both hoist those reads.
+
+## D13 — Card list pagination is keyset, not offset
+SPEC §7 says cursor-based. The cursor is the card's UUIDv7, base64url-encoded — v7 ids
+are time-ordered, so `id < cursor` with `ORDER BY id DESC` is a correct newest-first
+keyset with no extra sort column. Offsets would drift every time a card is saved
+mid-scroll, which on this screen is the normal case.
