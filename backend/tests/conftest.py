@@ -63,6 +63,11 @@ async def app() -> AsyncIterator[FastAPI]:
     instance.state.http_client = httpx.AsyncClient()
     instance.state.redis = create_redis()
     instance.state.provider_registry = ProviderRegistry(instance.state.http_client)
+    # The lifespan does not run under ASGITransport; the bot stays unmounted unless a
+    # test wires its own fake in.
+    instance.state.bot = None
+    instance.state.dispatcher = None
+    instance.state.scheduler = None
     try:
         await instance.state.redis.flushdb()
         yield instance

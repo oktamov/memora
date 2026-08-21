@@ -12,13 +12,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api.telegram_webhook import router as telegram_router
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.redis import create_redis
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
 from app.providers.registry import ProviderRegistry
+from app.telegram.bot import build_bot, build_dispatcher, configure_webhook
+from app.telegram.scheduler import build_scheduler
 
 logger = get_logger(__name__)
 
@@ -38,6 +41,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Providers are constructed once and handed the shared client (SPEC §6).
     app.state.provider_registry = ProviderRegistry(app.state.http_client)
 
+    # SPEC §9a: the bot runs in webhook mode, in this same process. It only mounts
+    # when a token is configured (BLOCKERS.md B1).
+    app.state.bot = None
+    app.state.dispatcher = None
+    app.state.scheduler = None
+
+    if settings.bot_enabled:
+        app.state.bot = build_bot(app.state.http_client)
+        app.state.dispatcher = build_dispatcher(
+            session_factory=async_session_factory,
+            redis=app.state.redis,
+            registry=app.state.provider_registry,
+        )
+        app.state.scheduler = build_scheduler(app.state.bot, async_session_factory)
+        app.state.scheduler.start()
+        try:
+            await configure_webhook(app.state.bot)
+        except Exception as exc:
+            # A webhook we could not register is worth shouting about, but it must not
+            # stop the API from serving the Mini App.
+            logger.error(
+                "webhook_registration_failed",
+                extra={"event": "webhook_registration_failed", "error": str(exc)},
+            )
+
     logger.info(
         "startup",
         extra={
@@ -50,6 +78,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if app.state.scheduler is not None:
+            app.state.scheduler.shutdown(wait=False)
+        if app.state.bot is not None:
+            await app.state.bot.session.close()
         await app.state.http_client.aclose()
         await app.state.redis.aclose()
         await engine.dispose()
@@ -77,6 +109,8 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router)
+    # Not under /api/v1, per SPEC §7.
+    app.include_router(telegram_router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, Any]:

@@ -379,3 +379,66 @@ grep useEffect + fetch(        → none: all server state goes through TanStack 
 backend pytest -q → 153 passed (unchanged)
 compose: /health ok · logs api | grep '"level": "ERROR"' → (none)
 ```
+
+---
+
+## M6 — Bot
+
+- [x] `telegram/bot.py` — aiogram `Bot` + `Dispatcher`, webhook mode, same process, no polling
+- [x] `POST /telegram/webhook/{secret}` — path secret **and** `X-Telegram-Bot-Api-Secret-Token` header, 403 before parsing the body
+- [x] `telegram/keyboards.py` — WebApp reply keyboard, inline meaning toggles, "Saqlash"
+- [x] `/start` — upsert user, short Uzbek greeting, persistent keyboard with "Memorani ochish"
+- [x] `/review` — due counts + WebApp button deep-linking to `?startapp=review`
+- [x] `/settings` — reminder hour on/off, language pair defaults
+- [x] Bare text → lookup, same §8 validation (≤64 chars, ≤4 tokens) and the same quota
+- [x] Meaning toggles **edit the message in place**, never send a new one
+- [x] "Saqlash" writes to today's daily deck through the same `card_service`
+- [x] `telegram/notify.py` — hourly APScheduler job inside the API process
+- [x] Selects only users whose local hour matches, reminders enabled, **and have due cards**
+- [x] Never sends to a user with zero due (SPEC §13: fastest way to get blocked)
+- [x] Chunks sends at ~25/second
+- [x] `TelegramForbiddenError` → `is_active = false`
+- [x] Tests: webhook rejects a wrong path secret and a wrong header, handlers, toggle state, save, reminder selection, forbidden handling
+- [x] Gates: ruff, mypy, pytest, frontend lint/tsc/build, compose health, no ERROR logs
+
+### M6 log
+
+**Shipped.** aiogram in webhook mode on the same FastAPI app and the same process — no
+second service, no polling. `/start`, `/review`, `/settings`, bare-word capture with
+in-place message editing, and the hourly reminder job.
+
+**Decided.** Pending lookups are staged in Redis under a short token, since Telegram
+caps callback data at 64 bytes; every callback re-checks the token's owner so a
+forwarded message cannot hand someone else's buttons over (D20). `/settings` owns the
+reminder controls and defers language defaults to the Mini App, rather than rebuilding
+a picker out of inline buttons (D21). Reminder recipients come from one query with the
+due count joined in, so "has due cards" is a filter rather than an afterthought (D22).
+
+**Deferred.** Nothing. Registering the webhook needs a public HTTPS host, which the
+app logs a warning about and continues without (BLOCKERS.md B2).
+
+**Gate output.**
+```
+ruff check . → All checks passed!   ruff format --check . → 85 files already formatted
+mypy app/services app/providers app/srs app/telegram → Success: no issues found in 32 source files
+pytest -q → 190 passed
+  · sending "serendipity" → 3 meanings, one toggle button each, Saqlash hidden until
+    something is selected                                      ← M6 acceptance
+  · toggling edits the same message: 1 sent, 1 edit, never a resend
+  · saving → card in today's daily deck with exactly the 2 selected meanings, and the
+    Mini App authenticating as the same telegram_id sees it immediately ← M6 acceptance
+  · /review replies with the count and a startapp=review deep link
+  · a 65-char term and a 5-word phrase are refused with no provider call (§8 in chat)
+  · another user pressing the buttons on a forwarded message changes nothing
+  · saving the same word twice → "allaqachon bor", not a crash
+  · reminders: nothing due → nobody selected; not-yet-due → nobody; suspended → nobody;
+    reminders off → nobody; reminder_hour null → nobody; inactive → nobody
+  · two users, same reminder_hour, Tashkent and London → different UTC moments
+  · TelegramForbiddenError → is_active = false, and never considered again
+compose (bot enabled with a local dev token):
+  startup log → {"bot_enabled": true}
+  POST /telegram/webhook/wrong                        → 403
+  POST /telegram/webhook/<correct>  (no header)       → 403
+  POST /telegram/webhook/<correct>  (correct header)  → 200
+  logs api | grep '"level": "ERROR"' → (none)
+```

@@ -109,3 +109,28 @@ client. The ladder exists so the user senses the consequence before choosing; th
 authoritative interval comes back from `/review/answer` and is what actually gets
 stored. Should the estimate ever need to be exact, the queue response is where the four
 values would go.
+
+## D20 — Pending bot lookups live in Redis under a short token
+Telegram caps callback data at 64 bytes, and a chat message carries no state, so the
+lookup result and the user's running selection cannot ride along in the buttons.
+**Choice:** stage them in Redis under a URL-safe token with a one-hour TTL. The token
+is what appears in the callback payload. Every callback re-checks that the token
+belongs to the pressing user, so forwarding the message does not hand someone else's
+buttons over. An abandoned lookup expires on its own.
+
+## D21 — `/settings` covers the reminder; the rest lives in the Mini App
+SPEC §9a asks `/settings` for "reminder hour on/off, language pair defaults". The
+reminder controls are genuinely faster in chat — two taps while the phone is already
+open on the conversation. Language pair defaults are a per-deck concern the Mini App
+already exposes properly, and rebuilding a language picker out of inline buttons would
+be a worse version of a screen that exists. **Choice:** the bot owns the reminder
+toggle and hour; `/settings` says in one line that the rest is in the app.
+
+## D22 — Reminder recipients come from a single query with the due count joined in
+SPEC §13 lists "reminders to users with nothing due" as the fastest way to get blocked.
+**Choice:** "has due cards" is a join condition, not a check performed after the send
+has started, and the count carried in the message is the same `due <= now` predicate
+the review queue uses — so the number the user reads is the number they will see. The
+local-hour comparison stays in Python because it depends on each user's IANA zone;
+the reminder-enabled population is small enough that this is cheaper than a per-row
+`AT TIME ZONE`.
